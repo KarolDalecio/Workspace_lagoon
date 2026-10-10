@@ -1,4 +1,5 @@
 import { io, type Socket } from 'socket.io-client';
+import { applyEdit, type GameMap, type MapEdit } from '../../shared/map';
 import type {
   ChatMessage,
   ChatScope,
@@ -29,6 +30,11 @@ export class World {
   chat: ChatMessage[];
   emotes = new Map<string, { emoji: string; until: number }>();
   disconnected = false;
+  map: GameMap;
+  /** Hash público deste navegador, comparado com o dono de cada mesa. */
+  ownerTag: string;
+  /** Incrementa a cada mudança no mapa, para o motor redesenhar o cenário. */
+  mapVersion = 0;
   private listeners = new Set<() => void>();
   private version = 0;
 
@@ -40,6 +46,21 @@ export class World {
   ) {
     for (const p of res.players) this.add(p);
     this.chat = res.chat;
+    this.map = res.map;
+    this.ownerTag = res.ownerTag;
+
+    socket.on('map:edited', edit => {
+      applyEdit(this.map, edit);
+      this.mapChanged();
+    });
+    socket.on('map:replaced', map => {
+      this.map = map;
+      this.mapChanged();
+    });
+    socket.on('map:claims', claims => {
+      this.map.claims = claims;
+      this.mapChanged();
+    });
 
     socket.on('player:joined', p => {
       this.add(p);
@@ -98,6 +119,37 @@ export class World {
     this.listeners.forEach(fn => fn());
   };
 
+  private mapChanged() {
+    this.mapVersion++;
+    this.notify();
+  }
+
+  /** Aplica localmente na hora (otimista) e envia ao servidor, que repassa aos outros. */
+  editMap(edit: MapEdit) {
+    const applied = applyEdit(this.map, edit);
+    if (!applied) return false;
+    this.socket.emit('map:edit', applied);
+    this.mapChanged();
+    return true;
+  }
+
+  resetMap() {
+    this.socket.emit('map:reset');
+  }
+
+  /** Chave "x,y" da mesa ocupada por este navegador, se houver. */
+  get myDesk() {
+    return Object.entries(this.map.claims).find(([, c]) => c.owner === this.ownerTag)?.[0] ?? null;
+  }
+
+  claimDesk(key: string) {
+    this.socket.emit('desk:claim', key);
+  }
+
+  releaseDesk() {
+    this.socket.emit('desk:release');
+  }
+
   sendChat(text: string, scope: ChatScope) {
     this.socket.emit('chat', { text, scope });
   }
@@ -130,7 +182,22 @@ export class World {
   }
 }
 
-export function joinSpace(req: JoinRequest): Promise<World> {
+/** Chave persistente deste navegador; é ela que "possui" a mesa ocupada. */
+function clientKey() {
+  try {
+    let key = localStorage.getItem('praca:key');
+    if (!key) {
+      key = crypto.randomUUID();
+      localStorage.setItem('praca:key', key);
+    }
+    return key;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
+
+export function joinSpace(partial: Omit<JoinRequest, 'clientKey'>): Promise<World> {
+  const req: JoinRequest = { ...partial, clientKey: clientKey() };
   return new Promise((resolve, reject) => {
     const socket: AppSocket = io({ reconnection: false });
     const fail = (msg: string) => {

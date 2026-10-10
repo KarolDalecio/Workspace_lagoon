@@ -1,4 +1,6 @@
 import {
+  Armchair,
+  Hammer,
   Link2,
   LogOut,
   MessageSquare,
@@ -14,13 +16,15 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import type { Area } from '../../../shared/map';
+import { parseKey, type Area, type Interaction } from '../../../shared/map';
 import { EMOTES } from '../../../shared/types';
-import { Engine } from '../game/engine';
+import { Engine, type Focus } from '../game/engine';
 import type { LocalMedia } from '../rtc/media';
 import { PeerManager } from '../rtc/peers';
 import type { World } from '../world';
 import { DeviceSettings } from './DeviceSettings';
+import { InteractionModal } from './InteractionModal';
+import { MapEditor } from './MapEditor';
 import { ChatPanel, PeoplePanel } from './Panels';
 import { VideoStrip } from './VideoStrip';
 
@@ -33,7 +37,9 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
   const [peers] = useState(() => new PeerManager(world.socket, world.selfId, media, world.notify));
   const [mediaEls] = useState(() => new Map<string, HTMLMediaElement>());
   const [area, setArea] = useState<Area | null>(null);
-  const [panel, setPanel] = useState<'chat' | 'people' | null>(null);
+  const [panel, setPanel] = useState<'chat' | 'people' | 'editor' | null>(null);
+  const [focus, setFocus] = useState<Focus | null>(null);
+  const [modal, setModal] = useState<Interaction | null>(null);
   const [emoteOpen, setEmoteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [seenChat, setSeenChat] = useState(world.chat.length);
@@ -44,6 +50,8 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
     media.onTrack = (kind, track) => peers.replaceTrack(kind, track);
     const engine = new Engine(canvasRef.current!, world, peers, mediaEls);
     engine.onAreaChange = setArea;
+    engine.onFocusChange = setFocus;
+    engine.onInteract = f => interactRef.current(f);
     engine.start();
     engineRef.current = engine;
     if (import.meta.env.DEV) Object.assign(window, { praca: { world, engine, peers, media } });
@@ -71,7 +79,51 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
   }, [toast]);
 
   const unread = panel === 'chat' ? 0 : world.chat.length - seenChat;
-  const togglePanel = (p: 'chat' | 'people') => setPanel(cur => (cur === p ? null : p));
+  const togglePanel = (p: 'chat' | 'people' | 'editor') => setPanel(cur => (cur === p ? null : p));
+  const myDesk = world.myDesk;
+
+  /** Tecla X (ou clique no aviso): abre o objeto ou ocupa/libera a mesa. */
+  function interact(f: Focus) {
+    if (f.type === 'interaction') {
+      setModal(f.value);
+    } else if (!f.claim) {
+      world.claimDesk(f.key);
+      setToast(myDesk ? 'Você mudou de mesa' : 'Mesa ocupada! Ela agora é sua');
+    } else if (f.claim.owner === world.ownerTag) {
+      world.releaseDesk();
+      setToast('Mesa liberada');
+    } else {
+      setToast(`Esta mesa é de ${f.claim.name}`);
+    }
+  }
+  const interactRef = useRef(interact);
+  interactRef.current = interact;
+
+  function focusLabel(f: Focus) {
+    if (f.type === 'interaction')
+      return (
+        <>
+          Aperte <kbd>X</kbd> para abrir <strong>{f.value.title}</strong>
+        </>
+      );
+    if (!f.claim)
+      return (
+        <>
+          Mesa livre · aperte <kbd>X</kbd> para ocupar
+        </>
+      );
+    if (f.claim.owner === world.ownerTag)
+      return (
+        <>
+          Sua mesa · aperte <kbd>X</kbd> para liberar
+        </>
+      );
+    return (
+      <>
+        Mesa de <strong>{f.claim.name}</strong>
+      </>
+    );
+  }
 
   async function copyInvite() {
     const url = `${location.origin}${location.pathname}?space=${encodeURIComponent(world.space)}`;
@@ -89,6 +141,12 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
         <canvas ref={canvasRef} className="game" />
         <VideoStrip world={world} peers={peers} media={media} mediaEls={mediaEls} />
 
+        {focus && !modal && panel !== 'editor' && (
+          <button className="focus-prompt" onClick={() => interact(focus)}>
+            {focusLabel(focus)}
+          </button>
+        )}
+        {modal && <InteractionModal interaction={modal} onClose={() => setModal(null)} />}
         {area && (
           <div className="area-banner">
             🔒 <strong>{area.name}</strong> — só quem está aqui dentro te ouve
@@ -97,7 +155,7 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
         {showHelp && (
           <div className="help" onClick={() => setShowHelp(false)}>
             Ande com <kbd>WASD</kbd>/<kbd>setas</kbd> ou clique no mapa · Chegue perto de alguém para conversar · <kbd>1</kbd>–
-            <kbd>5</kbd> emotes · <kbd>Alt</kbd>+<kbd>F</kbd> fumar
+            <kbd>5</kbd> emotes · <kbd>X</kbd> interagir · <kbd>Alt</kbd>+<kbd>F</kbd> fumar
           </div>
         )}
         {media.screenOn && (
@@ -120,6 +178,7 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
         )}
       </div>
 
+      {panel === 'editor' && <MapEditor world={world} engine={engineRef.current} onClose={() => setPanel(null)} />}
       {panel === 'chat' && <ChatPanel world={world} onClose={() => setPanel(null)} />}
       {panel === 'people' && (
         <PeoplePanel
@@ -219,6 +278,21 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
           </button>
           <button className="icon" onClick={() => engineRef.current?.setZoom(engineRef.current.zoom * 1.2)} title="Aumentar zoom">
             <ZoomIn size={18} />
+          </button>
+          {myDesk && (
+            <button
+              className="icon"
+              title="Ir para minha mesa"
+              onClick={() => {
+                const { x, y } = parseKey(myDesk);
+                engineRef.current?.goTo(x, y);
+              }}
+            >
+              <Armchair size={18} />
+            </button>
+          )}
+          <button className={`icon ${panel === 'editor' ? 'active' : ''}`} onClick={() => togglePanel('editor')} title="Editar mapa">
+            <Hammer size={18} />
           </button>
           <button className={`icon ${panel === 'chat' ? 'active' : ''}`} onClick={() => togglePanel('chat')} title="Chat">
             <MessageSquare size={18} />

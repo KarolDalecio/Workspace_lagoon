@@ -13,7 +13,10 @@ Plataforma de escritório virtual no estilo Gather: um mapa 2D onde cada pessoa 
 - **Escolha de microfone, câmera e alto-falante** no lobby e durante a conversa (engrenagem na barra), com medidor de nível do microfone
 - **Chat** "Todos" e "Por perto"
 - **Emotes** (teclas 1–5), **Alt+F para fumar** (cigarro com fumaça, visível para todos) e personalização de avatar
-- **Múltiplos espaços** por URL: `?space=nome-do-time`
+- **Múltiplos espaços** por URL: `?space=nome-do-time`, cada um com seu próprio mapa salvo em `data/spaces/`
+- **Interações com X**: chegue perto de um objeto (TV, quadro branco, mural, estante) e aperte X para abrir vídeo, site embutido, nota ou link. Cada quadro branco é uma sala colaborativa do Excalidraw
+- **Mesas**: sente numa cadeira encostada numa mesa de trabalho e aperte X para ocupar; seu nome aparece numa plaquinha na mesa. Uma mesa por pessoa, botão "Ir para minha mesa" na barra
+- **Editor de mapa** (ícone de martelo): pinte pisos, coloque/remova objetos, crie áreas privadas, mude a entrada e configure interações. As mudanças aparecem na hora para todos e ficam salvas
 
 ## Rodando localmente
 
@@ -52,5 +55,5 @@ client/src/
 
 - SFU (LiveKit/mediasoup) para conversas com muitas pessoas (a malha P2P funciona bem até ~6–8)
 - Autenticação e persistência (espaços, mapas, histórico de chat)
-- Editor de mapas e objetos interativos (whiteboard, links, jogos)
+- Permissões de edição (hoje qualquer pessoa no espaço pode editar o mapa) e tamanho de mapa configurável
 - Indicador de quem está falando, status (ocupado/ausente), mensagens diretas

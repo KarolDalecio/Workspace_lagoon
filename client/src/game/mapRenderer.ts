@@ -1,4 +1,4 @@
-import { MAP, TILE, type Floor, type Obj } from '../../../shared/map';
+import { TILE, type Floor, type GameMap, type Obj } from '../../../shared/map';
 
 const T = TILE;
 
@@ -22,7 +22,7 @@ function rrect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h
   ctx.fill();
 }
 
-function drawFloor(ctx: CanvasRenderingContext2D, f: Floor, x: number, y: number) {
+export function drawFloor(ctx: CanvasRenderingContext2D, f: Floor, x: number, y: number) {
   const px = x * T;
   const py = y * T;
   const h = hash(x, y);
@@ -102,7 +102,8 @@ function drawFloor(ctx: CanvasRenderingContext2D, f: Floor, x: number, y: number
   }
 }
 
-function drawObject(ctx: CanvasRenderingContext2D, o: Obj, x: number, y: number) {
+/** `map` é usado para olhar os vizinhos (ex.: monitor na mesa); null para desenhar ícones. */
+export function drawObject(ctx: CanvasRenderingContext2D, map: GameMap | null, o: Obj, x: number, y: number) {
   const px = x * T;
   const py = y * T;
   const h = hash(x, y);
@@ -121,7 +122,7 @@ function drawObject(ctx: CanvasRenderingContext2D, o: Obj, x: number, y: number)
       rrect(ctx, px, py + 2, T, T - 3, 2, '#9b6a3c');
       ctx.fillStyle = '#7d5330';
       ctx.fillRect(px, py + T - 5, T, 4);
-      if (MAP.objects[y - 1]?.[x] === 'chair' || MAP.objects[y + 1]?.[x] === 'chair') {
+      if (!map || map.objects[y - 1]?.[x] === 'chair' || map.objects[y + 1]?.[x] === 'chair') {
         rrect(ctx, px + 7, py + 6, 18, 12, 2, '#23262f');
         ctx.fillStyle = h % 3 ? '#5fb3f5' : '#7ad19a';
         ctx.fillRect(px + 9, py + 8, 14, 8);
@@ -183,6 +184,28 @@ function drawObject(ctx: CanvasRenderingContext2D, o: Obj, x: number, y: number)
       ctx.lineTo(px + 27, py + 10);
       ctx.stroke();
       break;
+    case 'tv':
+      ctx.fillStyle = '#2b2f3a';
+      ctx.fillRect(px + 13, py + 22, 6, 6);
+      rrect(ctx, px, py + 2, T, 21, 2, '#15171f');
+      ctx.fillStyle = (x + y) % 2 ? '#3b6fd6' : '#4f86e8';
+      ctx.fillRect(px + 2, py + 4, T - 4, 17);
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      ctx.fillRect(px + 2, py + 4, T - 4, 5);
+      break;
+    case 'board': {
+      ctx.fillStyle = '#7a5532';
+      ctx.fillRect(px, py + 2, T, 24);
+      ctx.fillStyle = '#c99a62';
+      ctx.fillRect(px + 2, py + 4, T - 4, 20);
+      const notes = ['#fff59d', '#ffccbc', '#c5e1a5', '#b3e5fc'];
+      for (let i = 0; i < 3; i++) {
+        ctx.fillStyle = notes[(h >> i) % notes.length];
+        ctx.fillRect(px + 4 + i * 9, py + 6 + ((h >> (i + 3)) % 8), 7, 7);
+        circle(ctx, px + 7.5 + i * 9, py + 7 + ((h >> (i + 3)) % 8), 1, '#e15b64');
+      }
+      break;
+    }
     case 'bookshelf': {
       ctx.fillStyle = '#6b4423';
       ctx.fillRect(px, py, T, T);
@@ -203,18 +226,17 @@ function drawObject(ctx: CanvasRenderingContext2D, o: Obj, x: number, y: number)
   }
 }
 
-/** Desenha o mapa estático uma vez em um canvas fora da tela. */
-export function renderStaticMap(scale = 2) {
-  const canvas = document.createElement('canvas');
-  canvas.width = MAP.width * T * scale;
-  canvas.height = MAP.height * T * scale;
+/** Desenha o mapa estático em um canvas fora da tela (refeito só quando o mapa muda). */
+export function renderStaticMap(map: GameMap, scale = 2, canvas = document.createElement('canvas')) {
+  canvas.width = map.width * T * scale;
+  canvas.height = map.height * T * scale;
   const ctx = canvas.getContext('2d')!;
   ctx.scale(scale, scale);
-  for (let y = 0; y < MAP.height; y++) for (let x = 0; x < MAP.width; x++) drawFloor(ctx, MAP.floor[y][x], x, y);
-  for (let y = 0; y < MAP.height; y++)
-    for (let x = 0; x < MAP.width; x++) {
-      const o = MAP.objects[y][x];
-      if (o) drawObject(ctx, o, x, y);
+  for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) drawFloor(ctx, map.floor[y][x], x, y);
+  for (let y = 0; y < map.height; y++)
+    for (let x = 0; x < map.width; x++) {
+      const o = map.objects[y][x];
+      if (o) drawObject(ctx, map, o, x, y);
     }
   return canvas;
 }

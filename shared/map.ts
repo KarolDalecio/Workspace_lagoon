@@ -1,17 +1,23 @@
 export const TILE = 32;
 
-export type Floor = 'grass' | 'wood' | 'carpet' | 'carpet2' | 'tile' | 'path' | 'water' | 'rug';
-export type Obj =
-  | 'wall'
-  | 'desk'
-  | 'chair'
-  | 'plant'
-  | 'tree'
-  | 'sofa'
-  | 'table'
-  | 'counter'
-  | 'whiteboard'
-  | 'bookshelf';
+export const FLOORS = ['grass', 'wood', 'carpet', 'carpet2', 'tile', 'path', 'water', 'rug'] as const;
+export const OBJECTS = [
+  'wall',
+  'desk',
+  'chair',
+  'plant',
+  'tree',
+  'sofa',
+  'table',
+  'counter',
+  'whiteboard',
+  'bookshelf',
+  'tv',
+  'board',
+] as const;
+
+export type Floor = (typeof FLOORS)[number];
+export type Obj = (typeof OBJECTS)[number];
 
 /** Área privada: quem está dentro só conversa com quem está na mesma área. */
 export interface Area {
@@ -30,6 +36,20 @@ export interface Rect {
   h: number;
 }
 
+/** O que acontece ao apertar X perto de um objeto. */
+export interface Interaction {
+  kind: 'embed' | 'note' | 'link';
+  title: string;
+  url?: string;
+  text?: string;
+}
+
+/** Mesa ocupada. `owner` é um identificador público (hash) da pessoa, nunca a chave dela. */
+export interface DeskClaim {
+  owner: string;
+  name: string;
+}
+
 export interface GameMap {
   width: number;
   height: number;
@@ -37,11 +57,32 @@ export interface GameMap {
   objects: (Obj | null)[][];
   areas: Area[];
   spawn: Rect;
+  /** Chave "x,y" do tile do objeto. */
+  interactions: Record<string, Interaction>;
+  /** Chave "x,y" da cadeira da mesa. */
+  claims: Record<string, DeskClaim>;
 }
 
-const BLOCKING = new Set<Obj>(['wall', 'desk', 'plant', 'tree', 'sofa', 'table', 'counter', 'whiteboard', 'bookshelf']);
+export type MapEdit =
+  | { kind: 'tiles'; tiles: { x: number; y: number; floor?: Floor; object?: Obj | null }[] }
+  | { kind: 'area-add'; area: Area }
+  | { kind: 'area-remove'; id: string }
+  | { kind: 'spawn'; rect: Rect }
+  | { kind: 'interaction'; key: string; value: Interaction | null };
 
-function buildMap(): GameMap {
+export const INTERACTIVE_OBJECTS = new Set<Obj>(['whiteboard', 'tv', 'board', 'bookshelf']);
+const BLOCKING = new Set<Obj>(['wall', 'desk', 'plant', 'tree', 'sofa', 'table', 'counter', 'whiteboard', 'bookshelf', 'tv', 'board']);
+const MAX_AREAS = 60;
+
+export const tileKey = (x: number, y: number) => `${x},${y}`;
+
+export function parseKey(key: string) {
+  const [x, y] = key.split(',').map(Number);
+  return { x, y };
+}
+
+/** Escritório padrão de todo espaço novo. */
+export function createDefaultMap(): GameMap {
   const W = 50;
   const H = 36;
   const floor: Floor[][] = Array.from({ length: H }, () => Array<Floor>(W).fill('grass'));
@@ -118,9 +159,9 @@ function buildMap(): GameMap {
   setO(35, 14, 1, 1, 'plant');
   setO(35, 18, 1, 1, 'plant');
 
-  // Lounge
+  // Lounge com TV
   setF(37, 14, 8, 5, 'rug');
-  setO(38, 14, 4, 1, 'sofa');
+  setO(38, 13, 2, 1, 'tv');
   setO(38, 18, 4, 1, 'sofa');
   setO(39, 16, 2, 1, 'table');
   setO(37, 16, 1, 1, 'chair');
@@ -141,9 +182,10 @@ function buildMap(): GameMap {
     setO(px + 3, 22, 1, 1, 'plant');
   }
 
-  // Recepção / lobby
+  // Recepção / lobby com mural
   setF(26, 21, 10, 4, 'rug');
   setO(21, 22, 4, 1, 'counter');
+  setO(19, 21, 2, 1, 'board');
   setO(19, 25, 1, 1, 'plant');
   setO(45, 25, 1, 1, 'plant');
   setO(45, 21, 1, 1, 'plant');
@@ -160,32 +202,217 @@ function buildMap(): GameMap {
   ];
   for (const [x, y] of trees) setO(x, y, 1, 1, 'tree');
 
-  const areas: Area[] = [
-    { id: 'meeting-a', name: 'Sala de Reunião A', x: 4, y: 4, w: 10, h: 8 },
-    { id: 'meeting-b', name: 'Sala de Reunião B', x: 15, y: 4, w: 10, h: 8 },
-    { id: 'pod-1', name: 'Cabine de Foco 1', x: 4, y: 22, w: 4, h: 4 },
-    { id: 'pod-2', name: 'Cabine de Foco 2', x: 9, y: 22, w: 4, h: 4 },
-    { id: 'pod-3', name: 'Cabine de Foco 3', x: 14, y: 22, w: 4, h: 4 },
-  ];
+  const welcome: Interaction = {
+    kind: 'note',
+    title: 'Mural de boas-vindas',
+    text:
+      'Bem-vindo à Praça!\n\n• Chegue perto de alguém para conversar.\n• Salas de reunião e cabines são privadas.\n' +
+      '• Sente numa cadeira de mesa e aperte X para ocupar a sua mesa.\n• Use o botão de martelo para editar o mapa.',
+  };
+  const tv: Interaction = { kind: 'embed', title: 'TV do lounge', url: 'https://www.youtube.com/embed/jfKfPfyJRdk' };
+  const shelf: Interaction = {
+    kind: 'note',
+    title: 'Estante',
+    text: 'Deixe aqui recomendações de leitura do time. Edite este texto pelo modo de edição.',
+  };
 
-  return { width: W, height: H, floor, objects, areas, spawn: { x: 27, y: 22, w: 8, h: 3 } };
+  return {
+    width: W,
+    height: H,
+    floor,
+    objects,
+    areas: [
+      { id: 'meeting-a', name: 'Sala de Reunião A', x: 4, y: 4, w: 10, h: 8 },
+      { id: 'meeting-b', name: 'Sala de Reunião B', x: 15, y: 4, w: 10, h: 8 },
+      { id: 'pod-1', name: 'Cabine de Foco 1', x: 4, y: 22, w: 4, h: 4 },
+      { id: 'pod-2', name: 'Cabine de Foco 2', x: 9, y: 22, w: 4, h: 4 },
+      { id: 'pod-3', name: 'Cabine de Foco 3', x: 14, y: 22, w: 4, h: 4 },
+    ],
+    spawn: { x: 27, y: 22, w: 8, h: 3 },
+    interactions: {
+      [tileKey(19, 21)]: welcome,
+      [tileKey(20, 21)]: welcome,
+      [tileKey(38, 13)]: tv,
+      [tileKey(39, 13)]: tv,
+      [tileKey(30, 4)]: shelf,
+    },
+    claims: {},
+  };
 }
 
-export const MAP = buildMap();
-
-export function inBounds(x: number, y: number) {
-  return x >= 0 && y >= 0 && x < MAP.width && y < MAP.height;
+export function inBounds(map: GameMap, x: number, y: number) {
+  return Number.isInteger(x) && Number.isInteger(y) && x >= 0 && y >= 0 && x < map.width && y < map.height;
 }
 
-export function isWalkable(x: number, y: number) {
-  if (!inBounds(x, y)) return false;
-  if (MAP.floor[y][x] === 'water') return false;
-  const o = MAP.objects[y][x];
+export function isWalkable(map: GameMap, x: number, y: number) {
+  if (!inBounds(map, x, y)) return false;
+  if (map.floor[y][x] === 'water') return false;
+  const o = map.objects[y][x];
   return !(o && BLOCKING.has(o));
 }
 
-export function areaAt(x: number, y: number): Area | null {
+export function areaAt(map: GameMap, x: number, y: number): Area | null {
   const tx = Math.round(x);
   const ty = Math.round(y);
-  return MAP.areas.find(a => tx >= a.x && tx < a.x + a.w && ty >= a.y && ty < a.y + a.h) ?? null;
+  return map.areas.find(a => tx >= a.x && tx < a.x + a.w && ty >= a.y && ty < a.y + a.h) ?? null;
+}
+
+const NEIGHBORS = [
+  [0, -1],
+  [1, 0],
+  [0, 1],
+  [-1, 0],
+];
+
+/** Uma cadeira encostada numa mesa de trabalho é uma mesa que pode ser ocupada. */
+export function isDesk(map: GameMap, x: number, y: number) {
+  if (!inBounds(map, x, y) || map.objects[y][x] !== 'chair') return false;
+  return NEIGHBORS.some(([dx, dy]) => map.objects[y + dy]?.[x + dx] === 'desk');
+}
+
+/** Tile da mesa onde a cadeira encosta (para desenhar a plaquinha com o nome). */
+export function deskTileFor(map: GameMap, x: number, y: number) {
+  for (const [dx, dy] of NEIGHBORS) if (map.objects[y + dy]?.[x + dx] === 'desk') return { x: x + dx, y: y + dy };
+  return null;
+}
+
+/** Objeto interativo ao alcance de quem está em (x, y): no mesmo tile ou vizinho. */
+export function interactionNear(map: GameMap, x: number, y: number) {
+  for (const [dx, dy] of [[0, 0], ...NEIGHBORS]) {
+    const key = tileKey(x + dx, y + dy);
+    const value = map.interactions[key];
+    if (value) return { key, value };
+  }
+  return null;
+}
+
+function cleanStr(v: unknown, max: number) {
+  return typeof v === 'string' ? v.trim().slice(0, max) : '';
+}
+
+function cleanUrl(v: unknown) {
+  const s = cleanStr(v, 500);
+  try {
+    const u = new URL(s);
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.toString() : '';
+  } catch {
+    return '';
+  }
+}
+
+export function cleanInteraction(v: unknown): Interaction | null {
+  if (!v || typeof v !== 'object') return null;
+  const i = v as Partial<Interaction>;
+  if (i.kind !== 'embed' && i.kind !== 'note' && i.kind !== 'link') return null;
+  const title = cleanStr(i.title, 60) || 'Sem título';
+  if (i.kind === 'note') {
+    const text = typeof i.text === 'string' ? i.text.slice(0, 2000) : '';
+    return text ? { kind: 'note', title, text } : null;
+  }
+  const url = cleanUrl(i.url);
+  return url ? { kind: i.kind, title, url } : null;
+}
+
+function cleanRect(map: GameMap, r: unknown): Rect | null {
+  if (!r || typeof r !== 'object') return null;
+  const { x, y, w, h } = r as Rect;
+  if (![x, y, w, h].every(Number.isInteger) || w < 1 || h < 1) return null;
+  if (!inBounds(map, x, y) || !inBounds(map, x + w - 1, y + h - 1)) return null;
+  return { x, y, w, h };
+}
+
+/** Remove interações e mesas ocupadas que deixaram de fazer sentido após uma edição. */
+function prune(map: GameMap) {
+  for (const key of Object.keys(map.interactions)) {
+    const { x, y } = parseKey(key);
+    if (!inBounds(map, x, y) || !map.objects[y][x]) delete map.interactions[key];
+  }
+  for (const key of Object.keys(map.claims)) {
+    const { x, y } = parseKey(key);
+    if (!isDesk(map, x, y)) delete map.claims[key];
+  }
+}
+
+/**
+ * Valida e aplica uma edição. Roda igual no servidor (fonte da verdade) e no
+ * cliente (aplicação otimista). Retorna a edição normalizada, ou null se inválida.
+ */
+export function applyEdit(map: GameMap, edit: MapEdit): MapEdit | null {
+  if (!edit || typeof edit !== 'object') return null;
+  switch (edit.kind) {
+    case 'tiles': {
+      if (!Array.isArray(edit.tiles) || edit.tiles.length > 400) return null;
+      const tiles: { x: number; y: number; floor?: Floor; object?: Obj | null }[] = [];
+      for (const t of edit.tiles) {
+        if (!t || !inBounds(map, t.x, t.y)) continue;
+        const clean: (typeof tiles)[number] = { x: t.x, y: t.y };
+        if (t.floor !== undefined) {
+          if (!FLOORS.includes(t.floor)) continue;
+          clean.floor = t.floor;
+          map.floor[t.y][t.x] = t.floor;
+        }
+        if (t.object !== undefined) {
+          if (t.object !== null && !OBJECTS.includes(t.object)) continue;
+          clean.object = t.object;
+          map.objects[t.y][t.x] = t.object;
+        }
+        tiles.push(clean);
+      }
+      if (!tiles.length) return null;
+      prune(map);
+      return { kind: 'tiles', tiles };
+    }
+    case 'area-add': {
+      const rect = cleanRect(map, edit.area);
+      const name = cleanStr(edit.area?.name, 40);
+      const id = cleanStr(edit.area?.id, 40);
+      if (!rect || !name || !id || map.areas.length >= MAX_AREAS || map.areas.some(a => a.id === id)) return null;
+      const area = { id, name, ...rect };
+      map.areas.push(area);
+      return { kind: 'area-add', area };
+    }
+    case 'area-remove': {
+      const before = map.areas.length;
+      map.areas = map.areas.filter(a => a.id !== edit.id);
+      return map.areas.length === before ? null : { kind: 'area-remove', id: edit.id };
+    }
+    case 'spawn': {
+      const rect = cleanRect(map, edit.rect);
+      if (!rect) return null;
+      map.spawn = rect;
+      return { kind: 'spawn', rect };
+    }
+    case 'interaction': {
+      const { x, y } = parseKey(String(edit.key));
+      if (!inBounds(map, x, y) || !map.objects[y][x]) return null;
+      const key = tileKey(x, y);
+      if (edit.value === null) {
+        delete map.interactions[key];
+        return { kind: 'interaction', key, value: null };
+      }
+      const value = cleanInteraction(edit.value);
+      if (!value) return null;
+      map.interactions[key] = value;
+      return { kind: 'interaction', key, value };
+    }
+  }
+  return null;
+}
+
+/** Confere se um JSON carregado do disco tem o formato de um mapa. */
+export function isGameMap(v: unknown): v is GameMap {
+  const m = v as GameMap;
+  return (
+    !!m &&
+    Number.isInteger(m.width) &&
+    Number.isInteger(m.height) &&
+    Array.isArray(m.floor) &&
+    m.floor.length === m.height &&
+    Array.isArray(m.objects) &&
+    m.objects.length === m.height &&
+    Array.isArray(m.areas) &&
+    !!m.spawn &&
+    typeof m.interactions === 'object' &&
+    typeof m.claims === 'object'
+  );
 }

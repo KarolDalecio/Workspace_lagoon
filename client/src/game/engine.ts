@@ -1,4 +1,17 @@
-import { MAP, TILE, areaAt, isWalkable, type Area } from '../../../shared/map';
+import {
+  TILE,
+  areaAt,
+  deskTileFor,
+  interactionNear,
+  isDesk,
+  isWalkable,
+  parseKey,
+  tileKey,
+  type Area,
+  type DeskClaim,
+  type Interaction,
+  type Rect,
+} from '../../../shared/map';
 import { PROX_RADIUS, canHear, volumeFor } from '../../../shared/proximity';
 import { EMOTES, type Dir } from '../../../shared/types';
 import type { PeerManager } from '../rtc/peers';
@@ -17,14 +30,33 @@ const KEY_DIR: Record<string, Dir> = {
 };
 const DELTA: Record<Dir, [number, number]> = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
 
+/** O que está ao alcance do jogador para a tecla X. */
+export type Focus =
+  | { type: 'interaction'; key: string; value: Interaction }
+  | { type: 'desk'; key: string; claim: DeskClaim | null };
+
+export type EditPhase = 'down' | 'move' | 'up';
+
 function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v));
 }
 
-/** Loop do jogo: entrada, movimento, câmera, renderização e proximidade. */
+function sameFocus(a: Focus | null, b: Focus | null) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** Loop do jogo: entrada, movimento, câmera, renderização, proximidade e edição. */
 export class Engine {
   zoom = 1.6;
   onAreaChange?: (a: Area | null) => void;
+  onFocusChange?: (f: Focus | null) => void;
+  onInteract?: (f: Focus) => void;
+
+  /** Modo de edição: cliques pintam o mapa em vez de andar. */
+  editMode = false;
+  onEditPointer?: (tile: Point, phase: EditPhase) => void;
+  /** Retângulo sendo arrastado e tile selecionado no editor. */
+  editOverlay: { rect: Rect | null; selected: Point | null } = { rect: null, selected: null };
 
   private ctx: CanvasRenderingContext2D;
   private raf = 0;
@@ -36,7 +68,11 @@ export class Engine {
   private syncTimer = 0;
   private cam = { x: 0, y: 0 };
   private areaId: string | null | undefined = undefined;
-  private staticMap = renderStaticMap(2);
+  private focus: Focus | null = null;
+  private hover: Point | null = null;
+  private dragging = false;
+  private staticMap: HTMLCanvasElement;
+  private staticVersion: number;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -45,13 +81,18 @@ export class Engine {
     private mediaEls: Map<string, HTMLMediaElement>,
   ) {
     this.ctx = canvas.getContext('2d')!;
+    this.staticMap = renderStaticMap(world.map);
+    this.staticVersion = world.mapVersion;
   }
 
   start() {
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     window.addEventListener('blur', this.onBlur);
+    window.addEventListener('mouseup', this.onMouseUp);
     this.canvas.addEventListener('mousedown', this.onMouseDown);
+    this.canvas.addEventListener('mousemove', this.onMouseMove);
+    this.canvas.addEventListener('mouseleave', this.onMouseLeave);
     this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
     this.raf = requestAnimationFrame(this.frame);
     // Fora do rAF: abas em segundo plano pausam o rAF, mas a conversa precisa continuar.
@@ -64,25 +105,35 @@ export class Engine {
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('blur', this.onBlur);
+    window.removeEventListener('mouseup', this.onMouseUp);
     this.canvas.removeEventListener('mousedown', this.onMouseDown);
+    this.canvas.removeEventListener('mousemove', this.onMouseMove);
+    this.canvas.removeEventListener('mouseleave', this.onMouseLeave);
     this.canvas.removeEventListener('wheel', this.onWheel);
     cancelAnimationFrame(this.raf);
     clearInterval(this.syncTimer);
   }
 
   setZoom(z: number) {
-    this.zoom = clamp(z, 0.8, 3);
+    this.zoom = clamp(z, 0.6, 3);
   }
 
   goTo(x: number, y: number, adjacent = false) {
     const me = this.world.self;
-    this.path = findPath(me.x, me.y, x, y, adjacent);
+    this.path = findPath(this.world.map, me.x, me.y, x, y, adjacent);
     this.target = this.path.at(-1) ?? null;
+  }
+
+  private tileAt(e: MouseEvent): Point {
+    const rect = this.canvas.getBoundingClientRect();
+    const wx = (e.clientX - rect.left) / this.zoom + this.cam.x;
+    const wy = (e.clientY - rect.top) / this.zoom + this.cam.y;
+    return { x: Math.floor(wx / TILE), y: Math.floor(wy / TILE) };
   }
 
   private onKeyDown = (e: KeyboardEvent) => {
     const t = e.target as HTMLElement | null;
-    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
     // Alt+F: acende/apaga o cigarro. preventDefault evita o menu do navegador.
     if (e.altKey && e.code === 'KeyF' && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
@@ -96,6 +147,10 @@ export class Engine {
       if (!this.held.includes(dir)) this.held.push(dir);
       this.path = [];
       this.target = null;
+      return;
+    }
+    if ((e.key === 'x' || e.key === 'X') && !e.repeat && !this.editMode) {
+      if (this.focus) this.onInteract?.(this.focus);
       return;
     }
     const n = Number(e.key);
@@ -113,10 +168,31 @@ export class Engine {
 
   private onMouseDown = (e: MouseEvent) => {
     if (e.button !== 0) return;
-    const rect = this.canvas.getBoundingClientRect();
-    const wx = (e.clientX - rect.left) / this.zoom + this.cam.x;
-    const wy = (e.clientY - rect.top) / this.zoom + this.cam.y;
-    this.goTo(Math.floor(wx / TILE), Math.floor(wy / TILE));
+    const tile = this.tileAt(e);
+    if (this.editMode) {
+      e.preventDefault();
+      this.dragging = true;
+      this.onEditPointer?.(tile, 'down');
+      return;
+    }
+    this.goTo(tile.x, tile.y);
+  };
+
+  private onMouseMove = (e: MouseEvent) => {
+    const tile = this.tileAt(e);
+    const changed = !this.hover || this.hover.x !== tile.x || this.hover.y !== tile.y;
+    this.hover = tile;
+    if (this.dragging && changed) this.onEditPointer?.(tile, 'move');
+  };
+
+  private onMouseUp = (e: MouseEvent) => {
+    if (!this.dragging) return;
+    this.dragging = false;
+    this.onEditPointer?.(this.tileAt(e), 'up');
+  };
+
+  private onMouseLeave = () => {
+    this.hover = null;
   };
 
   private onWheel = (e: WheelEvent) => {
@@ -131,6 +207,7 @@ export class Engine {
     if (this.world.players.has(this.world.selfId)) {
       this.step(now);
       this.animate(dt);
+      this.updateFocus();
       this.render(now);
     }
     this.raf = requestAnimationFrame(this.frame);
@@ -159,7 +236,7 @@ export class Engine {
     this.lastStep = now;
     const prevDir = me.dir;
     let moved = false;
-    if (isWalkable(next.x, next.y)) {
+    if (isWalkable(this.world.map, next.x, next.y)) {
       me.x = next.x;
       me.y = next.y;
       moved = true;
@@ -192,30 +269,81 @@ export class Engine {
     }
   }
 
+  /** Sentado numa cadeira de mesa → mesa; senão, objeto interativo ao lado. */
+  private updateFocus() {
+    const me = this.world.self;
+    const map = this.world.map;
+    let focus: Focus | null = null;
+    if (!this.editMode) {
+      if (isDesk(map, me.x, me.y)) {
+        const key = tileKey(me.x, me.y);
+        focus = { type: 'desk', key, claim: map.claims[key] ?? null };
+      } else {
+        const near = interactionNear(map, me.x, me.y);
+        if (near) focus = { type: 'interaction', ...near };
+      }
+    }
+    if (!sameFocus(focus, this.focus)) {
+      this.focus = focus;
+      this.onFocusChange?.(focus);
+    }
+  }
+
   private syncProximity() {
     const me = this.world.self;
+    const map = this.world.map;
     const desired = new Set<string>();
     for (const p of this.world.players.values()) {
       if (p.id === me.id) continue;
       const radius = this.peers.has(p.id) ? PROX_RADIUS + 1 : PROX_RADIUS;
-      if (canHear(me, p, radius)) desired.add(p.id);
+      if (canHear(map, me, p, radius)) desired.add(p.id);
     }
     this.peers.sync(desired);
 
     for (const [id, el] of this.mediaEls) {
       const p = this.world.players.get(id);
-      if (p) el.volume = volumeFor(me, p);
+      if (p) el.volume = volumeFor(map, me, p);
     }
 
-    const area = areaAt(me.x, me.y);
+    const area = areaAt(map, me.x, me.y);
     if ((area?.id ?? null) !== this.areaId) {
       this.areaId = area?.id ?? null;
       this.onAreaChange?.(area);
     }
   }
 
+  private label(text: string, cx: number, y: number, bg: string, size = 6) {
+    const { ctx } = this;
+    ctx.font = `600 ${size}px Inter, system-ui, sans-serif`;
+    const w = ctx.measureText(text).width + 6;
+    ctx.fillStyle = bg;
+    ctx.beginPath();
+    ctx.roundRect(cx - w / 2, y, w, size + 3, 3);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, cx, y + (size + 3) / 2 + 0.5);
+  }
+
+  private outline(x: number, y: number, w: number, h: number, color: string, dash: number[] = []) {
+    const { ctx } = this;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.setLineDash(dash);
+    ctx.strokeRect(x * TILE + 1, y * TILE + 1, w * TILE - 2, h * TILE - 2);
+    ctx.restore();
+  }
+
   private render(now: number) {
     const { canvas, ctx } = this;
+    const map = this.world.map;
+    if (this.staticVersion !== this.world.mapVersion) {
+      renderStaticMap(map, 2, this.staticMap);
+      this.staticVersion = this.world.mapVersion;
+    }
+
     const dpr = window.devicePixelRatio || 1;
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
@@ -231,8 +359,8 @@ export class Engine {
     const s = dpr * z;
     const viewW = w / z;
     const viewH = h / z;
-    const mapW = MAP.width * TILE;
-    const mapH = MAP.height * TILE;
+    const mapW = map.width * TILE;
+    const mapH = map.height * TILE;
     const me = this.world.self;
     const cx = me.rx * TILE + TILE / 2;
     const cy = me.ry * TILE + TILE / 2;
@@ -246,17 +374,39 @@ export class Engine {
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(this.staticMap, 0, 0, mapW, mapH);
 
-    const area = this.areaId ? MAP.areas.find(a => a.id === this.areaId) : null;
-    if (area) {
-      ctx.save();
-      ctx.strokeStyle = 'rgba(130,210,255,0.85)';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([6, 4]);
-      ctx.strokeRect(area.x * TILE + 1, area.y * TILE + 1, area.w * TILE - 2, area.h * TILE - 2);
-      ctx.restore();
+    // Plaquinhas das mesas ocupadas, no lado da mesa oposto à cadeira (para não ficar sob o nome de quem senta)
+    for (const [key, claim] of Object.entries(map.claims)) {
+      const chair = parseKey(key);
+      const desk = deskTileFor(map, chair.x, chair.y);
+      if (!desk) continue;
+      const mine = claim.owner === this.world.ownerTag;
+      this.label(claim.name, desk.x * TILE + 16, desk.y * TILE + (desk.y < chair.y ? 1 : 22), mine ? 'rgba(38,150,102,0.95)' : 'rgba(22,24,38,0.85)', 5.5);
     }
 
-    if (this.target) {
+    const area = this.areaId ? map.areas.find(a => a.id === this.areaId) : null;
+    if (area && !this.editMode) this.outline(area.x, area.y, area.w, area.h, 'rgba(130,210,255,0.85)', [6, 4]);
+
+    if (this.focus) {
+      const pulse = 0.55 + Math.sin(now / 250) * 0.3;
+      const color = `rgba(255,214,90,${pulse})`;
+      const { x, y } = parseKey(this.focus.key);
+      if (this.focus.type === 'desk') {
+        this.outline(x, y, 1, 1, color);
+        const desk = deskTileFor(map, x, y);
+        if (desk) this.outline(desk.x, desk.y, 1, 1, color);
+      } else {
+        // Destaca todos os tiles do mesmo objeto com a mesma interação (ex.: quadro de 2 tiles).
+        const json = JSON.stringify(this.focus.value);
+        const obj = map.objects[y][x];
+        let x0 = x;
+        let x1 = x;
+        while (map.objects[y][x0 - 1] === obj && JSON.stringify(map.interactions[tileKey(x0 - 1, y)]) === json) x0--;
+        while (map.objects[y][x1 + 1] === obj && JSON.stringify(map.interactions[tileKey(x1 + 1, y)]) === json) x1++;
+        this.outline(x0, y, x1 - x0 + 1, 1, color);
+      }
+    }
+
+    if (this.target && !this.editMode) {
       const pulse = 4 + Math.sin(now / 150) * 1.5;
       ctx.strokeStyle = 'rgba(255,255,255,0.8)';
       ctx.lineWidth = 1.5;
@@ -289,5 +439,67 @@ export class Engine {
       }
       drawEmote(ctx, p.rx * TILE + 16, p.ry * TILE, e.emoji, (e.until - now) / 3000);
     }
+
+    if (this.editMode) this.renderEditOverlay(viewW, viewH);
+  }
+
+  private renderEditOverlay(viewW: number, viewH: number) {
+    const { ctx } = this;
+    const map = this.world.map;
+    const x0 = Math.max(0, Math.floor(this.cam.x / TILE));
+    const y0 = Math.max(0, Math.floor(this.cam.y / TILE));
+    const x1 = Math.min(map.width, Math.ceil((this.cam.x + viewW) / TILE));
+    const y1 = Math.min(map.height, Math.ceil((this.cam.y + viewH) / TILE));
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    for (let x = x0; x <= x1; x++) {
+      ctx.moveTo(x * TILE, y0 * TILE);
+      ctx.lineTo(x * TILE, y1 * TILE);
+    }
+    for (let y = y0; y <= y1; y++) {
+      ctx.moveTo(x0 * TILE, y * TILE);
+      ctx.lineTo(x1 * TILE, y * TILE);
+    }
+    ctx.stroke();
+
+    for (const a of map.areas) {
+      ctx.fillStyle = 'rgba(130,210,255,0.12)';
+      ctx.fillRect(a.x * TILE, a.y * TILE, a.w * TILE, a.h * TILE);
+      this.outline(a.x, a.y, a.w, a.h, 'rgba(130,210,255,0.9)', [6, 4]);
+      this.label(`🔒 ${a.name}`, (a.x + a.w / 2) * TILE, a.y * TILE + 3, 'rgba(40,90,140,0.9)', 7);
+    }
+
+    const sp = map.spawn;
+    ctx.fillStyle = 'rgba(90,220,150,0.15)';
+    ctx.fillRect(sp.x * TILE, sp.y * TILE, sp.w * TILE, sp.h * TILE);
+    this.outline(sp.x, sp.y, sp.w, sp.h, 'rgba(90,220,150,0.9)', [4, 3]);
+    this.label('Entrada', (sp.x + sp.w / 2) * TILE, sp.y * TILE + 3, 'rgba(30,120,80,0.95)', 7);
+
+    for (const key of Object.keys(map.interactions)) {
+      const { x, y } = parseKey(key);
+      ctx.fillStyle = '#ffd65a';
+      ctx.beginPath();
+      ctx.arc(x * TILE + 27, y * TILE + 5, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (let y = y0; y < y1; y++)
+      for (let x = x0; x < x1; x++)
+        if (isDesk(map, x, y) && !map.claims[tileKey(x, y)]) {
+          ctx.fillStyle = 'rgba(90,220,150,0.9)';
+          ctx.beginPath();
+          ctx.arc(x * TILE + 16, y * TILE + 16, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+    const { rect, selected } = this.editOverlay;
+    if (rect) {
+      ctx.fillStyle = 'rgba(255,214,90,0.18)';
+      ctx.fillRect(rect.x * TILE, rect.y * TILE, rect.w * TILE, rect.h * TILE);
+      this.outline(rect.x, rect.y, rect.w, rect.h, '#ffd65a');
+    }
+    if (selected) this.outline(selected.x, selected.y, 1, 1, '#ff8a5b');
+    if (this.hover) this.outline(this.hover.x, this.hover.y, 1, 1, 'rgba(255,255,255,0.9)');
   }
 }

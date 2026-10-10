@@ -1,3 +1,5 @@
+import type { DeskClaim, GameMap, MapEdit } from './map';
+
 export type Dir = 'up' | 'down' | 'left' | 'right';
 
 /** Ação contínua do avatar, visível para todos (ex.: fumando). */
@@ -54,6 +56,8 @@ export interface JoinRequest {
   avatar: Avatar;
   audio: boolean;
   video: boolean;
+  /** Identificador persistente do navegador (localStorage), usado para saber de quem é cada mesa. */
+  clientKey: string;
 }
 
 export interface JoinResponse {
@@ -61,6 +65,9 @@ export interface JoinResponse {
   space: string;
   players: PlayerState[];
   chat: ChatMessage[];
+  map: GameMap;
+  /** Hash público do clientKey; comparado com DeskClaim.owner para achar a própria mesa. */
+  ownerTag: string;
 }
 
 export interface ServerToClient {
@@ -71,6 +78,9 @@ export interface ServerToClient {
   'chat:message': (m: ChatMessage) => void;
   emote: (e: { id: string; emoji: string }) => void;
   'rtc:signal': (s: { from: string; data: SignalData }) => void;
+  'map:edited': (edit: MapEdit) => void;
+  'map:replaced': (map: GameMap) => void;
+  'map:claims': (claims: Record<string, DeskClaim>) => void;
 }
 
 export interface ClientToServer {
@@ -81,6 +91,10 @@ export interface ClientToServer {
   media: (m: { audio: boolean; video: boolean }) => void;
   action: (a: PlayerAction | null) => void;
   'rtc:signal': (s: { to: string; data: SignalData }) => void;
+  'map:edit': (edit: MapEdit) => void;
+  'map:reset': () => void;
+  'desk:claim': (key: string) => void;
+  'desk:release': () => void;
 }
 
 export const AVATAR_OPTIONS = {

@@ -1,10 +1,20 @@
 import express from 'express';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
-import { MAP, isWalkable } from '../shared/map';
+import {
+  applyEdit,
+  createDefaultMap,
+  isDesk,
+  isGameMap,
+  isWalkable,
+  parseKey,
+  tileKey,
+  type GameMap,
+} from '../shared/map';
 import { canHear } from '../shared/proximity';
 import {
   AVATAR_OPTIONS,
@@ -22,18 +32,69 @@ import {
 const PORT = process.argv.includes('--dev') ? 3001 : Number(process.env.PORT ?? 3001);
 const CHAT_HISTORY = 100;
 const DIRS = new Set<Dir>(['up', 'down', 'left', 'right']);
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const DATA_DIR = path.join(ROOT, 'data', 'spaces');
 
 interface Space {
   players: Map<string, PlayerState>;
   chat: ChatMessage[];
+  map: GameMap;
+  saveTimer?: NodeJS.Timeout;
 }
 
 const spaces = new Map<string, Space>();
+mkdirSync(DATA_DIR, { recursive: true });
+
+/** Cada quadro branco ganha uma sala própria do Excalidraw (colaborativa). */
+function excalidrawRoom() {
+  return `https://excalidraw.com/#room=${randomBytes(10).toString('hex')},${randomBytes(16).toString('base64url').slice(0, 22)}`;
+}
+
+function newSpaceMap() {
+  const map = createDefaultMap();
+  for (let y = 0; y < map.height; y++)
+    for (let x = 0; x < map.width; x++) {
+      if (map.objects[y][x] !== 'whiteboard') continue;
+      // Tiles vizinhos do mesmo quadro compartilham a mesma sala.
+      const left = map.interactions[tileKey(x - 1, y)];
+      map.interactions[tileKey(x, y)] =
+        map.objects[y][x - 1] === 'whiteboard' && left
+          ? left
+          : { kind: 'embed', title: 'Quadro branco', url: excalidrawRoom() };
+    }
+  return map;
+}
+
+function mapFile(id: string) {
+  return path.join(DATA_DIR, `${id}.json`);
+}
+
+function loadMap(id: string): GameMap {
+  try {
+    const data = JSON.parse(readFileSync(mapFile(id), 'utf8'));
+    if (isGameMap(data)) return data;
+  } catch {
+    // espaço novo
+  }
+  return newSpaceMap();
+}
+
+function scheduleSave(id: string, space: Space) {
+  clearTimeout(space.saveTimer);
+  space.saveTimer = setTimeout(() => {
+    space.saveTimer = undefined;
+    try {
+      writeFileSync(mapFile(id), JSON.stringify(space.map));
+    } catch (err) {
+      console.error('Falha ao salvar mapa', id, err);
+    }
+  }, 1000);
+}
 
 function getSpace(id: string) {
   let s = spaces.get(id);
   if (!s) {
-    s = { players: new Map(), chat: [] };
+    s = { players: new Map(), chat: [], map: loadMap(id) };
     spaces.set(id, s);
   }
   return s;
@@ -62,20 +123,29 @@ function cleanAvatar(a: Partial<Avatar> | undefined): Avatar {
   };
 }
 
+/** Hash público da chave do navegador: identifica o dono da mesa sem expor a chave. */
+function ownerTagFor(clientKey: unknown) {
+  const key = typeof clientKey === 'string' && clientKey.length >= 16 ? clientKey.slice(0, 100) : randomUUID();
+  return createHash('sha256').update(key).digest('base64url').slice(0, 16);
+}
+
 function findSpawn(space: Space) {
-  const { x, y, w, h } = MAP.spawn;
-  const occupied = new Set([...space.players.values()].map(p => `${p.x},${p.y}`));
+  const { map } = space;
+  const { x, y, w, h } = map.spawn;
+  const occupied = new Set([...space.players.values()].map(p => tileKey(p.x, p.y)));
   const free: { x: number; y: number }[] = [];
   for (let yy = y; yy < y + h; yy++)
-    for (let xx = x; xx < x + w; xx++) if (isWalkable(xx, yy) && !occupied.has(`${xx},${yy}`)) free.push({ x: xx, y: yy });
-  return free.length ? free[Math.floor(Math.random() * free.length)] : { x: x + Math.floor(w / 2), y: y + Math.floor(h / 2) };
+    for (let xx = x; xx < x + w; xx++) if (isWalkable(map, xx, yy) && !occupied.has(tileKey(xx, yy))) free.push({ x: xx, y: yy });
+  if (free.length) return free[Math.floor(Math.random() * free.length)];
+  for (let yy = 0; yy < map.height; yy++) for (let xx = 0; xx < map.width; xx++) if (isWalkable(map, xx, yy)) return { x: xx, y: yy };
+  return { x: 0, y: 0 };
 }
 
 const app = express();
 const server = createServer(app);
-const io = new Server<ClientToServer, ServerToClient>(server, { cors: { origin: true } });
+const io = new Server<ClientToServer, ServerToClient>(server, { cors: { origin: true }, maxHttpBufferSize: 1e6 });
 
-const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist');
+const dist = path.join(ROOT, 'dist');
 app.get('/health', (_req, res) => {
   res.json({ ok: true, spaces: spaces.size });
 });
@@ -84,12 +154,14 @@ app.get('*', (_req, res, next) => res.sendFile(path.join(dist, 'index.html'), er
 
 io.on('connection', socket => {
   let spaceId: string | null = null;
+  let ownerTag = '';
   const current = () => (spaceId ? spaces.get(spaceId) : undefined);
   const me = () => current()?.players.get(socket.id);
 
   socket.on('join', (req, ack) => {
     if (spaceId || typeof ack !== 'function') return;
     spaceId = cleanSpaceId(req?.space);
+    ownerTag = ownerTagFor(req?.clientKey);
     const space = getSpace(spaceId);
     const pos = findSpawn(space);
     const player: PlayerState = {
@@ -105,17 +177,25 @@ io.on('connection', socket => {
     };
     space.players.set(socket.id, player);
     socket.join(spaceId);
-    ack({ selfId: socket.id, space: spaceId, players: [...space.players.values()], chat: space.chat });
+    ack({
+      selfId: socket.id,
+      space: spaceId,
+      players: [...space.players.values()],
+      chat: space.chat,
+      map: space.map,
+      ownerTag,
+    });
     socket.to(spaceId).emit('player:joined', player);
   });
 
   socket.on('move', m => {
     const p = me();
-    if (!p || !spaceId || !m) return;
+    const space = current();
+    if (!p || !space || !spaceId || !m) return;
     const { x, y, dir } = m;
     if (!Number.isInteger(x) || !Number.isInteger(y) || !DIRS.has(dir)) return;
     const dist = Math.abs(x - p.x) + Math.abs(y - p.y);
-    if (dist > 1 || (dist === 1 && !isWalkable(x, y))) {
+    if (dist > 1 || (dist === 1 && !isWalkable(space.map, x, y))) {
       socket.emit('player:moved', { id: p.id, x: p.x, y: p.y, dir: p.dir });
       return;
     }
@@ -144,7 +224,7 @@ io.on('connection', socket => {
       io.to(spaceId).emit('chat:message', msg);
     } else {
       for (const other of space.players.values())
-        if (other.id === p.id || canHear(p, other)) io.to(other.id).emit('chat:message', msg);
+        if (other.id === p.id || canHear(space.map, p, other)) io.to(other.id).emit('chat:message', msg);
     }
   });
 
@@ -168,6 +248,54 @@ io.on('connection', socket => {
     socket.to(spaceId).emit('player:updated', { id: p.id, action: p.action });
   });
 
+  socket.on('map:edit', edit => {
+    const space = current();
+    if (!space || !spaceId || !me()) return;
+    const claimsBefore = JSON.stringify(space.map.claims);
+    const applied = applyEdit(space.map, edit);
+    if (!applied) {
+      socket.emit('map:replaced', space.map); // cliente aplicou algo inválido: ressincroniza
+      return;
+    }
+    socket.to(spaceId).emit('map:edited', applied);
+    if (JSON.stringify(space.map.claims) !== claimsBefore) io.to(spaceId).emit('map:claims', space.map.claims);
+    scheduleSave(spaceId, space);
+  });
+
+  socket.on('map:reset', () => {
+    const space = current();
+    if (!space || !spaceId || !me()) return;
+    space.map = newSpaceMap();
+    io.to(spaceId).emit('map:replaced', space.map);
+    scheduleSave(spaceId, space);
+  });
+
+  socket.on('desk:claim', key => {
+    const p = me();
+    const space = current();
+    if (!p || !space || !spaceId || typeof key !== 'string') return;
+    const { x, y } = parseKey(key);
+    const k = tileKey(x, y);
+    const taken = space.map.claims[k];
+    if (!isDesk(space.map, x, y) || (taken && taken.owner !== ownerTag)) {
+      socket.emit('map:claims', space.map.claims);
+      return;
+    }
+    // Uma mesa por pessoa: ocupar outra libera a anterior.
+    for (const [ck, c] of Object.entries(space.map.claims)) if (c.owner === ownerTag) delete space.map.claims[ck];
+    space.map.claims[k] = { owner: ownerTag, name: p.name };
+    io.to(spaceId).emit('map:claims', space.map.claims);
+    scheduleSave(spaceId, space);
+  });
+
+  socket.on('desk:release', () => {
+    const space = current();
+    if (!space || !spaceId) return;
+    for (const [ck, c] of Object.entries(space.map.claims)) if (c.owner === ownerTag) delete space.map.claims[ck];
+    io.to(spaceId).emit('map:claims', space.map.claims);
+    scheduleSave(spaceId, space);
+  });
+
   socket.on('rtc:signal', s => {
     const space = current();
     if (!space || !s || typeof s.to !== 'string' || !space.players.has(s.to)) return;
@@ -179,7 +307,8 @@ io.on('connection', socket => {
     if (!space || !spaceId) return;
     space.players.delete(socket.id);
     io.to(spaceId).emit('player:left', socket.id);
-    if (!space.players.size && !space.chat.length) spaces.delete(spaceId);
+    // O mapa fica salvo em disco; descarrega da memória só depois de gravar.
+    if (!space.players.size && !space.chat.length && !space.saveTimer) spaces.delete(spaceId);
   });
 });
 

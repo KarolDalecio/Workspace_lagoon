@@ -1,4 +1,4 @@
-import { MAP, isWalkable } from '../../../shared/map';
+import { isWalkable, type GameMap } from '../../../shared/map';
 
 export interface Point {
   x: number;
@@ -16,11 +16,12 @@ const STEPS: Point[] = [
  * BFS em grade. Se o destino não for caminhável (ou `adjacent` for true),
  * para no vizinho caminhável mais próximo. Retorna os passos sem a origem.
  */
-export function findPath(sx: number, sy: number, tx: number, ty: number, adjacent = false): Point[] {
-  const key = (x: number, y: number) => y * MAP.width + x;
+export function findPath(map: GameMap, sx: number, sy: number, tx: number, ty: number, adjacent = false): Point[] {
+  const key = (x: number, y: number) => y * map.width + x;
+  const walkable = (x: number, y: number) => isWalkable(map, x, y);
   const goals = new Set<number>();
-  if (!adjacent && isWalkable(tx, ty)) goals.add(key(tx, ty));
-  else for (const s of STEPS) if (isWalkable(tx + s.x, ty + s.y)) goals.add(key(tx + s.x, ty + s.y));
+  if (!adjacent && walkable(tx, ty)) goals.add(key(tx, ty));
+  else for (const s of STEPS) if (walkable(tx + s.x, ty + s.y)) goals.add(key(tx + s.x, ty + s.y));
   if (!goals.size || goals.has(key(sx, sy))) return [];
 
   const prev = new Map<number, number>([[key(sx, sy), -1]]);
@@ -31,11 +32,11 @@ export function findPath(sx: number, sy: number, tx: number, ty: number, adjacen
       const nx = cur.x + s.x;
       const ny = cur.y + s.y;
       const k = key(nx, ny);
-      if (prev.has(k) || !isWalkable(nx, ny)) continue;
+      if (prev.has(k) || !walkable(nx, ny)) continue;
       prev.set(k, key(cur.x, cur.y));
       if (goals.has(k)) {
         const path: Point[] = [];
-        for (let c = k; c !== key(sx, sy); c = prev.get(c)!) path.push({ x: c % MAP.width, y: Math.floor(c / MAP.width) });
+        for (let c = k; c !== key(sx, sy); c = prev.get(c)!) path.push({ x: c % map.width, y: Math.floor(c / map.width) });
         return path.reverse();
       }
       queue.push({ x: nx, y: ny });

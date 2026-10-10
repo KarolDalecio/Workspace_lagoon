@@ -54,12 +54,17 @@ type Tool = 'select' | 'stamp' | 'erase' | 'hand' | 'box';
 const FLOOR_NAMES: Record<Floor, string> = {
   grass: 'Grama',
   wood: 'Madeira',
+  darkwood: 'Madeira escura',
   carpet: 'Carpete azul',
   carpet2: 'Carpete vinho',
   tile: 'Piso frio',
+  hex: 'Piso hexagonal',
   path: 'Caminho',
+  sand: 'Areia',
   water: 'Água',
   rug: 'Tapete',
+  darkrug: 'Tapete escuro',
+  moss: 'Sebe / grama escura',
   stone: 'Pedra',
   dark: 'Escuro',
 };
@@ -453,6 +458,7 @@ export function Mapmaker({ world, engine, onClose, onToast }: { world: World; en
     painted.current.add(key);
     if (room.objects.some(o => o.type === stamp.type && o.x === at.x && o.y === at.y)) return;
     const obj: PlacedObject = { id: newId(), type: stamp.type, x: at.x, y: at.y, color: stamp.color, rot: stamp.rot };
+    if (def.label !== undefined) obj.label = def.label;
     if (def.defaultInteraction === 'whiteboard') obj.interaction = { kind: 'embed', title: 'Quadro branco', url: excalidrawRoom() };
     const ops: MapEdit[] = [{ kind: 'obj-add', room: room.id, obj }];
     if (def.blocks && autoBlock) ops.push({ kind: 'flag', room: room.id, effect: 'impassable', tiles: footprintTiles(obj).map(t => ({ ...t, value: true })) });
@@ -1368,6 +1374,18 @@ function ObjectDetails({
           )}
         </div>
       </div>
+      {def.label !== undefined && (
+        <label className="field">
+          Texto da placa
+          <input
+            key={obj.id}
+            defaultValue={obj.label ?? ''}
+            maxLength={24}
+            onBlur={e => e.target.value !== obj.label && onUpdate({ label: e.target.value })}
+            onKeyDown={e => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+          />
+        </label>
+      )}
       <InteractionForm obj={obj} onSave={value => onUpdate({ interaction: value })} />
       <button className="reset" onClick={onRemove}>
         <Trash2 size={14} /> Apagar objeto (Delete)

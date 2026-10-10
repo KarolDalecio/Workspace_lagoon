@@ -87,6 +87,56 @@ export function drawFloor(ctx: CanvasRenderingContext2D, f: Floor, x: number, y:
         ctx.stroke();
       }
       break;
+    case 'darkwood':
+      ctx.fillStyle = '#8a5a3c';
+      ctx.fillRect(px, py, T, T);
+      ctx.fillStyle = '#7a4d32';
+      for (let i = 0; i < 4; i++) {
+        ctx.fillRect(px, py + i * 8 + 7, T, 1);
+        ctx.fillRect(px + ((h >> (i * 3)) % T), py + i * 8, 1, 7);
+      }
+      break;
+    case 'sand':
+      ctx.fillStyle = '#e9e6dc';
+      ctx.fillRect(px, py, T, T);
+      ctx.strokeStyle = '#d4cfbf';
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.moveTo(px, py + 6 + i * 10);
+        ctx.quadraticCurveTo(px + 16, py + 2 + i * 10, px + 32, py + 6 + i * 10);
+        ctx.stroke();
+      }
+      break;
+    case 'hex': {
+      ctx.fillStyle = '#c9ced8';
+      ctx.fillRect(px, py, T, T);
+      ctx.strokeStyle = '#b3b9c6';
+      ctx.lineWidth = 1;
+      const hx = px + 16;
+      const hy = py + 16;
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const a = (Math.PI / 3) * i;
+        ctx.lineTo(hx + Math.cos(a) * 14, hy + Math.sin(a) * 14);
+      }
+      ctx.closePath();
+      ctx.stroke();
+      break;
+    }
+    case 'moss':
+      ctx.fillStyle = (x + y) % 2 ? '#4f8f3c' : '#4b8a39';
+      ctx.fillRect(px, py, T, T);
+      ctx.fillStyle = '#5ea648';
+      for (let i = 0; i < 4; i++) circle(ctx, px + 6 + ((h >> (i * 4)) % 20), py + 6 + ((h >> (i * 3 + 2)) % 20), 3, '#5ea648');
+      break;
+    case 'darkrug':
+      ctx.fillStyle = '#4a3328';
+      ctx.fillRect(px, py, T, T);
+      ctx.strokeStyle = '#6b4a3a';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(px + 3.5, py + 3.5, T - 7, T - 7);
+      break;
     case 'stone':
       ctx.fillStyle = '#b9b4ab';
       ctx.fillRect(px, py, T, T);

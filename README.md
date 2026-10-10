@@ -14,7 +14,8 @@ Plataforma de escritório virtual no estilo Gather: um mapa 2D onde cada pessoa 
 - **Chat** "Todos" e "Por perto"
 - **Emotes** (teclas 1–5), **Alt+F para fumar** (cigarro com fumaça, visível para todos) e personalização de avatar
 - **Múltiplos espaços** por URL: `?space=nome-do-time`, cada um com suas salas salvas em `data/spaces/`
-- **Várias salas por espaço** (Escritório e Auditório no modelo padrão), ligadas por **portais**
+- **Mapa padrão no layout do escritório remoto do Gather**: refeitório, sala de foco, jardim zen, lounge, pátio com ilhas de mesas, salas de reunião, jogos e biblioteca — e a porta "All Hands" leva ao Auditório
+- **Várias salas por espaço**, ligadas por **portais**
 - **Interações com X**: TV, quadro branco (Excalidraw colaborativo), mural, documentos — site, vídeo, imagem, link ou nota
 - **Mesas ocupáveis**: entre numa área de mesa e aperte X; seu nome aparece na mesa. Botão "Ir para minha mesa"
 - **Holofote**: no palco do Auditório, você é ouvido pela sala toda

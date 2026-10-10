@@ -2,7 +2,7 @@ import { CATALOG } from './catalog';
 
 export const TILE = 32;
 
-export const FLOORS = ['grass', 'wood', 'carpet', 'carpet2', 'tile', 'path', 'water', 'rug', 'stone', 'dark'] as const;
+export const FLOORS = ['grass', 'wood', 'darkwood', 'carpet', 'carpet2', 'tile', 'hex', 'path', 'sand', 'water', 'rug', 'darkrug', 'stone', 'dark', 'moss'] as const;
 export type Floor = (typeof FLOORS)[number];
 
 /** Efeitos de tile marcados por presença (como no Gather, cada um é uma camada independente). */
@@ -28,6 +28,8 @@ export interface PlacedObject {
   color: number;
   rot: number;
   interaction?: Interaction;
+  /** Texto de placas e letreiros. */
+  label?: string;
 }
 
 export interface Rect {
@@ -222,10 +224,11 @@ class Builder {
     for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) this.room[effect][tileKey(xx, yy)] = 1;
   }
 
-  put(type: string, x: number, y: number, opts: { color?: number; rot?: number; interaction?: Interaction } = {}) {
+  put(type: string, x: number, y: number, opts: { color?: number; rot?: number; interaction?: Interaction; label?: string } = {}) {
     const def = CATALOG[type];
     const obj: PlacedObject = { id: `${this.room.id}-${(this.n++).toString(36)}`, type, x, y, color: opts.color ?? 0, rot: opts.rot ?? def.rotations?.[0] ?? 0 };
     if (opts.interaction) obj.interaction = opts.interaction;
+    if (def.label !== undefined) obj.label = opts.label ?? def.label;
     this.room.objects.push(obj);
     if (def.blocks) this.flag('impassable', x, y, def.w, def.h);
     return obj;
@@ -283,160 +286,276 @@ const WELCOME: Interaction = {
     '• Chegue perto de alguém para conversar.\n' +
     '• Salas de reunião e cabines são áreas privadas.\n' +
     '• Entre numa área de mesa e aperte X para ocupar a sua.\n' +
-    '• A porta à esquerda leva ao Auditório — lá, quem sobe no palco é ouvido por todos.\n' +
+    '• A porta "All Hands" no topo leva ao Auditório — lá, quem sobe no palco é ouvido por todos.\n' +
     '• O martelo abre o Mapmaker para editar o espaço.',
 };
 
+/**
+ * Escritório no layout do modelo de escritório remoto do Gather (refeitório à esquerda,
+ * faixa de foco/zen/lounge no topo, pátio com ilhas de mesas, salas à direita e embaixo).
+ */
 function officeRoom(id: string, name: string, auditorium?: string) {
-  const b = new Builder(id, name, 50, 36, 'grass');
-
-  // Prédio: interior x 4..45, y 4..25
-  b.floor(3, 3, 44, 24, 'wood');
-  b.wallH(3, 46, 3);
-  b.wallH(3, 46, 26);
-  b.wallV(3, 4, 25);
-  b.wallV(46, 4, 25);
-
-  // Fileira de salas no topo
-  b.floor(4, 4, 10, 8, 'carpet');
-  b.floor(15, 4, 10, 8, 'carpet2');
-  b.floor(36, 4, 10, 8, 'tile');
-  b.wallV(14, 4, 11);
-  b.wallV(25, 4, 11);
-  b.wallV(35, 4, 11);
-  b.wallH(4, 45, 12);
-  b.open(9, 12, 2);
-  b.open(19, 12, 2);
-  b.open(30, 12);
-  b.open(40, 12, 2);
-
-  const meetingRoom = (ox: number, label: string) => {
-    for (const [dx, dy] of [[3, 7], [5, 7], [3, 8], [5, 8]]) b.put('table', ox + dx, dy);
-    for (let x = ox + 3; x <= ox + 6; x++) {
-      b.put('chair', x, 6, { rot: 0, color: 1 });
-      b.put('chair', x, 9, { rot: 2, color: 1 });
-    }
-    for (const y of [7, 8]) {
-      b.put('chair', ox + 2, y, { rot: 3, color: 1 });
-      b.put('chair', ox + 7, y, { rot: 1, color: 1 });
-    }
-    b.put('whiteboard', ox + 4, 4, { interaction: { kind: 'embed', title: `Quadro — ${label}`, url: '' } });
-    b.put('plant', ox, 4);
-    b.put('plant', ox + 9, 4);
-    b.area(label, ox, 4, 10, 8);
+  const b = new Builder(id, name, 64, 41, 'grass');
+  const OUTER = 5;
+  const FACE = 4;
+  /** Troca a parede do tile por outro objeto (janela, porta, quadro na parede). */
+  const swap = (type: string, x: number, y: number, opts: Parameters<Builder['put']>[3] = {}) => {
+    const def = CATALOG[type];
+    for (let i = 0; i < def.w; i++) b.open(x + i, y);
+    return b.put(type, x, y, opts);
   };
-  meetingRoom(4, 'Sala de Reunião A');
-  meetingRoom(15, 'Sala de Reunião B');
+
+  // Casca do prédio
+  b.floor(2, 3, 60, 36, 'wood');
+  b.wallH(1, 62, 2, OUTER);
+  b.wallH(1, 62, 39, OUTER);
+  b.wallV(1, 3, 38, OUTER);
+  b.wallV(62, 3, 38, OUTER);
+  b.wallH(2, 61, 3, FACE);
+  // Saída lateral esquerda para o jardim
+  for (let y = 27; y <= 30; y++) {
+    b.open(1, y);
+    b.floor(1, y, 1, 1, 'wood');
+  }
+  b.put('railing', 0, 26);
+
+  // ---------------- Refeitório e cozinha (esquerda)
+  b.floor(2, 4, 16, 17, 'darkwood');
+  b.wallV(18, 4, 7, FACE);
+  b.put('console', 18, 8);
+  swap('frame', 3, 3);
+  for (let x = 4; x <= 8; x++) swap('window', x, 3);
+  b.put('plant', 10, 4);
+  b.put('fridge', 12, 4);
+  for (let x = 13; x <= 16; x++) b.put('counter', x, 4);
+  b.put('counter', 17, 4, { color: 1 });
+  for (let x = 14; x <= 17; x++) {
+    b.put('counter', x, 7, { color: 1 });
+    b.put('stool', x, 8);
+  }
+  const dining = (rx: number, ry: number, sides: boolean) => {
+    b.floor(rx, ry, 5, 5, 'darkrug');
+    const tx = rx + 1;
+    const ty = ry + 1;
+    b.put('diningtable', tx, ty);
+    for (let x = tx; x < tx + 3; x++) {
+      b.put('chair', x, ty - 1, { rot: 0, color: 6 });
+      b.put('chair', x, ty + 2, { rot: 2, color: 6 });
+    }
+    if (sides)
+      for (const y of [ty, ty + 1]) {
+        b.put('chair', tx - 1, y, { rot: 3, color: 6 });
+        b.put('chair', tx + 3, y, { rot: 1, color: 6 });
+      }
+  };
+  dining(3, 5, true);
+  dining(10, 10, false);
+  dining(3, 12, true);
+  dining(11, 16, false);
+  b.put('coffeecart', 8, 20);
+  b.put('watercooler', 7, 21);
+  for (let x = 3; x <= 17; x++) if (x < 7 || x > 9) b.put('railing', x, 21, { rot: 0 });
+  for (let y = 14; y <= 21; y++) b.put('railing', 18, y, { rot: 1 });
+  b.put('standsign', 2, 22, { label: 'i', interaction: WELCOME });
+
+  // ---------------- Faixa do topo
+  swap('board', 20, 3, { color: 2 });
+  swap('board', 22, 3, {
+    color: 1,
+    interaction: {
+      kind: 'note',
+      title: 'Mapa do escritório',
+      text: 'Refeitório à esquerda · Foco, jardim zen e lounge no topo · Mesas no pátio · Salas de reunião à direita · All Hands pela porta do topo.',
+    },
+  });
+  for (let x = 25; x <= 27; x++) b.put('locker', x, 4);
+  b.put('printer', 28, 4);
+  b.put('watercooler', 30, 4);
+  b.put('plant', 31, 4);
+  b.put('cabinet', 32, 4, { color: 1 });
+  swap('door', 34, 3);
+  swap('door', 35, 3);
+  b.put('plaque', 34, 4, { label: 'ALL HANDS' });
+  b.put('bookshelf', 37, 4);
+  b.put('screen', 39, 4, { color: 1 });
+  b.put('lamp', 42, 4);
+  swap('stairs', 43, 3);
+  if (auditorium) {
+    b.portal(34, 3, { room: auditorium, x: 14, y: 19 });
+    b.portal(35, 3, { room: auditorium, x: 15, y: 19 });
+  }
+
+  // Sala de foco: 6 cabines
+  b.floor(22, 5, 6, 6, 'dark');
+  for (const y of [5, 7, 9]) {
+    b.put('smalldesk', 23, y);
+    b.put('smalldesk', 26, y);
+    b.put('chair', 22, y, { rot: 3 });
+    b.put('chair', 27, y, { rot: 1 });
+  }
+  b.flag('impassable', 24, 5, 2, 6);
+  b.put('plaque', 24, 7, { label: 'FOCUS' });
+  b.area('Foco', 22, 5, 6, 6);
+
+  // Jardim zen
+  b.floor(29, 5, 5, 5, 'sand');
+  b.put('rock', 30, 6);
+  b.put('rock', 32, 7);
+  b.put('rock', 30, 8, { color: 1 });
+  b.put('plant', 33, 9);
+  b.flag('impassable', 29, 5, 5, 5);
+
+  // Lounge azul
+  b.floor(37, 5, 6, 6, 'carpet');
+  b.put('sofa', 39, 5, { rot: 0 });
+  b.put('sofa', 39, 10, { rot: 2 });
+  b.put('sofaside', 37, 6, { rot: 3 });
+  b.put('sofaside', 42, 6, { rot: 1 });
+  b.put('coffeetable', 39, 7, { color: 1 });
+  b.put('plant', 37, 9, { color: 2 });
+  b.area('Lounge', 37, 5, 6, 6);
+
+  // ---------------- Pátio com ilhas de mesas
+  b.floor(21, 12, 25, 16, 'grass');
+  let desk = 1;
+  const pod = (x0: number, y0: number) => {
+    b.floor(x0 - 1, y0 - 1, 11, 6, 'moss');
+    for (let i = 0; i < 3; i++) {
+      const dx = x0 + i * 3;
+      b.put('desklong', dx, y0 + 1);
+      b.put('desklong', dx, y0 + 2);
+      b.put('chair', dx + 1, y0, { rot: 0, color: 7 });
+      b.put('chair', dx + 1, y0 + 3, { rot: 2, color: 7 });
+      b.area(`Mesa ${desk++}`, dx, y0, 3, 2, true);
+      b.area(`Mesa ${desk++}`, dx, y0 + 2, 3, 2, true);
+    }
+  };
+  pod(23, 14);
+  pod(35, 14);
+  pod(23, 22);
+  pod(35, 22);
+  for (const [x, y] of [[22, 12], [44, 12], [22, 26], [44, 26]]) b.put('tree', x, y);
+  b.put('arrowsign', 27, 27, { rot: 1, label: 'TEAM GAMES' });
+  b.put('arrowsign', 35, 27, { rot: 3, label: 'MEETINGS' });
+  b.put('cat', 21, 23);
+  for (const x of [17, 18, 19]) b.put('scooter', x, 27, { color: x % 2 });
+  b.put('standsign', 20, 27, { label: 'P' });
+  b.flag('spawn', 24, 29, 18, 2);
+
+  // ---------------- Salas da direita
+  b.wallV(47, 3, 11, OUTER);
+  b.wallV(54, 3, 10, OUTER);
+  b.floor(48, 4, 6, 7, 'darkwood');
+  b.floor(55, 4, 7, 7, 'darkwood');
+  b.wallH(47, 61, 11, FACE);
+  for (const x of [50, 51, 57, 58]) swap('door', x, 11);
+
+  // Sala 1
+  b.put('cabinet', 48, 4, { color: 1 });
+  b.put('whiteboard', 50, 4, { interaction: { kind: 'embed', title: 'Quadro — Sala 1', url: '' } });
+  b.put('frame', 52, 4);
+  b.floor(49, 5, 5, 5, 'carpet');
+  b.put('roundtable', 51, 7);
+  b.put('chair', 51, 6, { rot: 0 });
+  b.put('chair', 51, 8, { rot: 2 });
+  b.put('chair', 50, 7, { rot: 3 });
+  b.put('chair', 52, 7, { rot: 1 });
+  b.area('Sala 1', 48, 4, 6, 7);
+
+  // Sala 2
+  b.put('screen', 55, 4, { color: 2 });
+  swap('board', 57, 3, { color: 2 });
+  b.put('roundtable', 60, 4, { color: 1 });
+  b.put('sofa', 57, 5, { rot: 0, color: 2 });
+  b.put('table', 57, 6);
+  b.put('table', 57, 7);
+  for (const y of [6, 7]) {
+    b.put('chair', 56, y, { rot: 3, color: 3 });
+    b.put('chair', 59, y, { rot: 1, color: 3 });
+  }
+  b.put('sofa', 57, 9, { rot: 2, color: 2 });
+  b.area('Sala 2', 55, 4, 7, 7);
+  b.put('cabinet', 61, 12, { color: 1 });
+
+  // Sala de reunião grande
+  b.wallV(47, 14, 27, OUTER);
+  b.wallH(48, 61, 14, FACE);
+  b.wallH(48, 61, 26, FACE);
+  for (const x of [54, 55]) {
+    swap('door', x, 14);
+    swap('door', x, 26);
+  }
+  b.floor(48, 15, 14, 11, 'hex');
+  for (const x of [48, 49, 51, 52, 57, 58, 59, 61]) b.put('console', x, 15, { color: x % 2 });
+  for (const y of [17, 18, 19]) b.put('barrel', 48, y);
+  b.put('barrel', 48, 22, { color: 1 });
+  b.put('cabinet', 49, 25);
+  b.put('console', 61, 17);
+  b.put('lamp', 61, 21, { color: 1 });
+  b.put('conftable', 52, 20, { interaction: { kind: 'embed', title: 'Telão da sala de reunião', url: '' } });
+  for (let x = 52; x <= 56; x++) {
+    b.put('chair', x, 19, { rot: 0, color: 1 });
+    b.put('chair', x, 24, { rot: 2, color: 1 });
+  }
+  for (let y = 20; y <= 23; y++) {
+    b.put('chair', 51, y, { rot: 3, color: 1 });
+    b.put('chair', 57, y, { rot: 1, color: 1 });
+  }
+  b.area('Sala de Reunião', 48, 15, 14, 11);
+
+  // ---------------- Faixa de baixo
+  b.wallH(2, 61, 31, FACE);
+  b.wallV(19, 31, 38, OUTER);
+  b.wallV(47, 31, 38, OUTER);
+  for (const x of [5, 8, 11, 14]) swap('window', x, 31);
+  for (let x = 21; x <= 45; x++) if (x < 30 || x > 35) swap('window', x, 31, { color: 1 });
+  for (const x of [17, 32, 33, 54, 55]) swap('door', x, 31);
+
+  // Jogos do time
+  b.floor(2, 32, 17, 7, 'carpet2');
+  for (const [x, c] of [[3, 0], [4, 1], [5, 2], [6, 0]] as const) b.put('arcade', x, 32, { color: c });
+  b.put('roundtable', 13, 35);
+  b.put('chair', 13, 34, { rot: 0, color: 4 });
+  b.put('chair', 13, 36, { rot: 2, color: 4 });
+  b.put('chair', 12, 35, { rot: 3, color: 4 });
+  b.put('chair', 14, 35, { rot: 1, color: 4 });
+  b.put('sofa', 4, 37, { rot: 2, color: 3 });
+  b.put('plant', 18, 38);
+  b.area('Jogos do Time', 2, 32, 17, 7);
+
+  // Reuniões pequenas
+  b.floor(20, 32, 27, 7, 'tile');
+  b.put('plant', 20, 32);
+  b.put('plant', 46, 32);
+  for (const [x0, label] of [[23, 'Reunião 3'], [37, 'Reunião 4']] as const) {
+    b.put('diningtable', x0 + 1, 34, { color: 2 });
+    for (let x = x0 + 1; x <= x0 + 3; x++) {
+      b.put('chair', x, 33, { rot: 0, color: 1 });
+      b.put('chair', x, 36, { rot: 2, color: 1 });
+    }
+    b.put('whiteboard', x0 + 1, 38, { interaction: { kind: 'embed', title: `Quadro — ${label}`, url: '' } });
+  }
+  b.area('Reunião 3', 20, 32, 12, 7);
+  b.area('Reunião 4', 34, 32, 13, 7);
 
   // Biblioteca
-  for (const x of [26, 28, 30, 32]) b.put('bookshelf', x, 4);
-  b.put('plant', 34, 4, { color: 2 });
-  b.floor(28, 7, 5, 3, 'rug');
-  b.put('sofa', 29, 6, { color: 1 });
-  b.put('roundtable', 30, 8);
-  b.put('armchair', 28, 8, { rot: 3, color: 1 });
-  b.put('armchair', 32, 8, { rot: 1, color: 1 });
-  b.put('document', 31, 10, {
+  b.floor(48, 32, 14, 7, 'darkwood');
+  for (const x of [48, 50, 52, 57, 59]) b.put('bookshelf', x, 32);
+  b.put('plant', 61, 32);
+  for (const cx of [50, 59]) {
+    b.put('roundtable', cx, 35);
+    b.put('armchair', cx - 1, 35, { rot: 3, color: 1 });
+    b.put('armchair', cx + 1, 35, { rot: 1, color: 1 });
+  }
+  b.put('document', 58, 37, {
     interaction: { kind: 'note', title: 'Recomendações de leitura', text: 'Deixe aqui as recomendações de leitura do time. Edite pelo Mapmaker.' },
   });
-  b.put('plant', 26, 11);
-  b.put('plant', 34, 11);
+  b.put('lamp', 61, 38);
 
-  // Cozinha
-  for (let x = 36; x <= 41; x++) b.put('counter', x, 4);
-  b.put('fridge', 42, 4);
-  b.put('watercooler', 44, 4);
-  b.put('plant', 45, 4);
-  for (const [x, y] of [[39, 7], [41, 7], [39, 8], [41, 8]]) b.put('table', x, y, { color: 1 });
-  for (let x = 39; x <= 42; x++) {
-    b.put('chair', x, 6, { rot: 0, color: 4 });
-    b.put('chair', x, 9, { rot: 2, color: 4 });
-  }
-  b.put('plant', 36, 11);
-  b.put('plant', 45, 11);
-
-  // Escritório aberto: cada lugar (cadeira + mesa) é uma área de mesa ocupável
-  let desk = 1;
-  for (const cx of [5, 12, 19, 26]) {
-    b.put('desk', cx, 15);
-    b.put('desk', cx + 2, 15);
-    b.put('desk', cx, 16);
-    b.put('desk', cx + 2, 16);
-    for (let x = cx; x < cx + 4; x++) {
-      b.put('chair', x, 14, { rot: 0 });
-      b.put('chair', x, 17, { rot: 2 });
-      b.area(`Mesa ${desk++}`, x, 14, 1, 2, true);
-      b.area(`Mesa ${desk++}`, x, 16, 1, 2, true);
-    }
-  }
-  b.put('tallplant', 4, 13);
-  b.put('tallplant', 33, 13);
-  b.put('cabinet', 33, 18);
-  b.put('printer', 32, 18);
-
-  // Lounge com TV
-  b.floor(37, 14, 8, 5, 'rug');
-  b.put('tv', 38, 13, { interaction: { kind: 'video', title: 'TV do lounge', url: 'https://www.youtube.com/embed/jfKfPfyJRdk' } });
-  b.put('sofa', 38, 18, { rot: 2 });
-  b.put('sofa', 40, 18, { rot: 2 });
-  b.put('coffeetable', 39, 16);
-  b.put('fishbowl', 42, 14);
-  b.put('armchair', 37, 16, { rot: 3 });
-  b.put('armchair', 42, 16, { rot: 1 });
-  b.put('cat', 44, 17, { color: 1 });
-  b.put('plant', 45, 13);
-  b.put('plant', 45, 19);
-  b.area('Lounge', 37, 14, 8, 5);
-
-  // Cabines de foco
-  b.wallH(4, 18, 21);
-  b.wallV(8, 22, 25);
-  b.wallV(13, 22, 25);
-  b.wallV(18, 22, 25);
-  [4, 9, 14].forEach((px, i) => {
-    b.floor(px, 22, 4, 4, 'carpet2');
-    b.open(px + 1, 21);
-    b.put('desk', px + 1, 25);
-    b.put('chair', px + 1, 24, { rot: 0, color: 2 });
-    b.put('lamp', px + 3, 25);
-    b.put('plant', px + 3, 22);
-    b.area(`Cabine de Foco ${i + 1}`, px, 22, 4, 4);
-  });
-
-  // Recepção / lobby
-  b.floor(26, 21, 10, 4, 'rug');
-  for (let x = 21; x <= 24; x++) b.put('counter', x, 22, { color: 2 });
-  b.put('board', 19, 21, { interaction: WELCOME });
-  b.put('tallplant', 25, 21);
-  b.put('plant', 19, 25);
-  b.put('plant', 45, 25);
-  b.put('plant', 45, 21);
-  b.put('screen', 37, 21, { color: 1 });
-  b.flag('spawn', 27, 22, 8, 3);
-
-  // Entrada e área externa
-  b.open(30, 26, 2);
-  b.floor(30, 26, 2, 1, 'wood');
-  b.floor(30, 27, 2, 9, 'path');
-  b.floor(16, 31, 14, 1, 'path');
-  b.floor(8, 29, 8, 5, 'water');
-  b.flag('impassable', 8, 29, 8, 5);
-  for (const [x, y] of [[1, 1], [8, 1], [16, 0], [25, 1], [34, 1], [42, 0], [48, 2], [1, 10], [1, 26], [48, 12], [48, 24], [20, 29], [40, 29], [44, 33], [24, 33], [36, 32], [2, 34], [48, 34], [17, 34]])
-    b.put('tree', x, y, { color: (x + y) % 5 === 0 ? 2 : 0 });
-  for (const [x, y] of [[6, 28], [16, 29], [7, 34], [26, 28]]) b.put('bush', x, y);
-  for (const [x, y] of [[34, 28], [35, 29], [27, 30], [17, 30], [5, 31]]) b.put('flowers', x, y, { color: (x + y) % 3 });
-  b.put('rock', 7, 31);
-  b.put('rock', 16, 33, { color: 1 });
-
-  // Porta lateral para o Auditório
-  if (auditorium) {
-    b.open(3, 18);
-    b.open(3, 19);
-    b.put('door', 3, 18);
-    b.put('door', 3, 19);
-    b.portal(3, 18, { room: auditorium, x: 14, y: 19 });
-    b.portal(3, 19, { room: auditorium, x: 15, y: 19 });
-  }
+  // ---------------- Jardim em volta
+  for (const [x, y] of [[0, 5], [0, 12], [0, 19], [0, 33], [63, 6], [63, 15], [63, 24], [63, 34], [10, 40], [30, 40], [50, 40]]) b.put('bush', x, y);
+  for (const [x, y] of [[5, 0], [14, 1], [26, 0], [52, 0], [58, 1], [0, 39], [63, 40]]) b.put('tree', x, y);
+  b.put('flowers', 0, 28, { color: 1 });
   return b.room;
 }
 
@@ -463,8 +582,8 @@ function auditoriumRoom(id: string, name: string, office?: string) {
     b.floor(14, 21, 2, 1, 'wood');
     b.put('door', 14, 21);
     b.put('door', 15, 21);
-    b.portal(14, 21, { room: office, x: 4, y: 18 });
-    b.portal(15, 21, { room: office, x: 4, y: 19 });
+    b.portal(14, 21, { room: office, x: 34, y: 4 });
+    b.portal(15, 21, { room: office, x: 35, y: 4 });
   }
   return b.room;
 }
@@ -530,6 +649,7 @@ function cleanObject(room: Room, v: unknown): PlacedObject | null {
   const color = Number.isInteger(o.color) && o.color >= 0 && o.color < def.colors.length ? o.color : 0;
   const rot = def.rotations?.includes(o.rot) ? o.rot : (def.rotations?.[0] ?? 0);
   const obj: PlacedObject = { id: o.id, type: o.type, x: o.x, y: o.y, color, rot };
+  if (def.label !== undefined) obj.label = typeof o.label === 'string' ? o.label.trim().slice(0, 24) : def.label;
   const interaction = o.interaction ? cleanInteraction(o.interaction) : null;
   if (interaction) obj.interaction = interaction;
   return obj;
@@ -748,11 +868,16 @@ function applyOne(map: SpaceMap, edit: MapEdit, depth: number): Applied | null {
           prevPatch[k] = obj[k];
           patch[k] = next[k];
         }
+      if (edit.patch.label !== undefined && next.label !== undefined) {
+        prevPatch.label = obj.label ?? '';
+        patch.label = next.label;
+      }
       if (edit.patch.interaction !== undefined) {
         prevPatch.interaction = obj.interaction ?? null;
         patch.interaction = next.interaction ?? null;
       }
       Object.assign(obj, { x: next.x, y: next.y, color: next.color, rot: next.rot });
+      if (next.label !== undefined) obj.label = next.label;
       if (next.interaction) obj.interaction = next.interaction;
       else delete obj.interaction;
       return { op: { kind: 'obj-update', room: roomId, id: obj.id, patch }, inverse: { kind: 'obj-update', room: roomId, id: obj.id, patch: prevPatch } };

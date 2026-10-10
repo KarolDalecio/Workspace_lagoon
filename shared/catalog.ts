@@ -16,6 +16,8 @@ export interface ObjectDef {
   blocks: boolean;
   /** Interação criada automaticamente ao colocar (ex.: quadro branco). */
   defaultInteraction?: 'whiteboard';
+  /** Objeto com texto editável (placas). Valor é o texto padrão ao colocar. */
+  label?: string;
   keywords?: string;
 }
 
@@ -28,14 +30,19 @@ export const CATEGORIES: { id: Category; name: string }[] = [
   { id: 'estrutura', name: 'Estrutura' },
 ];
 
-const SEATS = ['#3d4466', '#5b6ee1', '#e15b64', '#2fb380', '#f0a73a', '#8c5bd6'];
+const SEATS = ['#3d4466', '#5b6ee1', '#e15b64', '#2fb380', '#f0a73a', '#8c5bd6', '#e8eaf0', '#7e57c2'];
 const WOODS = ['#9b6a3c', '#e8dcc4', '#5a5f73', '#f2f2f2'];
 const FABRIC = ['#5b6ee1', '#6c4fa3', '#2fb380', '#e15b64', '#4a4a4a', '#f0a73a'];
 
 export const CATALOG: Record<string, ObjectDef> = {
   desk: { name: 'Mesa de trabalho', category: 'escritorio', w: 2, h: 1, colors: WOODS, blocks: true, keywords: 'computador monitor' },
   chair: { name: 'Cadeira', category: 'escritorio', w: 1, h: 1, colors: SEATS, rotations: [0, 1, 2, 3], blocks: false, keywords: 'assento' },
-  table: { name: 'Mesa de reunião', category: 'escritorio', w: 2, h: 1, colors: ['#a8743f', ...WOODS.slice(1)], blocks: true },
+  table: { name: 'Mesa de reunião', category: 'escritorio', w: 2, h: 1, colors: ['#a8743f', ...WOODS.slice(1), '#3f8f6a'], blocks: true },
+  desklong: { name: 'Mesa de trabalho longa', category: 'escritorio', w: 3, h: 1, colors: ['#9b6a3c', '#e8dcc4', '#5a5f73'], blocks: true, keywords: 'computador monitor baia' },
+  smalldesk: { name: 'Mesa de foco', category: 'escritorio', w: 1, h: 1, colors: ['#3a3f4f', '#9b6a3c'], blocks: true, keywords: 'cabine monitor' },
+  conftable: { name: 'Mesa de conferência com telão', category: 'escritorio', w: 5, h: 4, colors: ['#7d8597', '#5a5f73'], blocks: true, keywords: 'reunião tela' },
+  locker: { name: 'Armário', category: 'escritorio', w: 1, h: 1, colors: ['#8a93a6', '#5b6ee1', '#5a5f73'], blocks: true, keywords: 'escaninho' },
+  console: { name: 'Painel de controle', category: 'escritorio', w: 1, h: 1, colors: ['#5a5f73', '#3a3f4f'], blocks: true, keywords: 'servidor' },
   cabinet: { name: 'Arquivo', category: 'escritorio', w: 1, h: 1, colors: ['#2fb380', '#5a5f73', '#e15b64'], blocks: true, keywords: 'gaveteiro' },
   printer: { name: 'Impressora', category: 'escritorio', w: 1, h: 1, colors: ['#e8dcc4', '#5a5f73'], blocks: true },
   watercooler: { name: 'Bebedouro', category: 'escritorio', w: 1, h: 1, colors: ['#3fb6d6'], blocks: true, keywords: 'água' },
@@ -48,11 +55,14 @@ export const CATALOG: Record<string, ObjectDef> = {
   coffeetable: { name: 'Mesa de centro', category: 'moveis', w: 2, h: 1, colors: ['#f2f2f2', '#a8743f'], blocks: true },
   bookshelf: { name: 'Estante', category: 'moveis', w: 2, h: 1, colors: ['#6b4423', '#e8dcc4'], blocks: true, keywords: 'livros' },
   counter: { name: 'Bancada de cozinha', category: 'moveis', w: 1, h: 1, colors: ['#d9dce3', '#2fb380', '#5a5f73'], blocks: true, keywords: 'pia' },
+  diningtable: { name: 'Mesa de refeitório', category: 'moveis', w: 3, h: 2, colors: ['#3f8f6a', '#a8743f', '#e8dcc4'], blocks: true, keywords: 'jantar cozinha' },
+  stool: { name: 'Banqueta', category: 'moveis', w: 1, h: 1, colors: ['#e8eaf0', '#3a3f4f'], blocks: false },
+  coffeecart: { name: 'Carrinho de café', category: 'moveis', w: 2, h: 2, colors: ['#7a5532', '#3a3f4f'], blocks: true, keywords: 'cafeteria bar' },
   fridge: { name: 'Geladeira', category: 'moveis', w: 1, h: 1, colors: ['#d9dce3', '#4a4a4a', '#e15b64'], blocks: true },
 
   whiteboard: { name: 'Quadro branco', category: 'interativos', w: 2, h: 1, colors: ['#fbfbfd'], blocks: true, defaultInteraction: 'whiteboard', keywords: 'excalidraw desenho' },
   tv: { name: 'TV', category: 'interativos', w: 2, h: 1, colors: ['#15171f', '#5a5f73'], blocks: true, keywords: 'vídeo televisão' },
-  board: { name: 'Mural', category: 'interativos', w: 2, h: 1, colors: ['#c99a62', '#5b6ee1'], blocks: true, keywords: 'avisos recados' },
+  board: { name: 'Mural', category: 'interativos', w: 2, h: 1, colors: ['#c99a62', '#5b6ee1', '#3f8f5a'], blocks: true, keywords: 'avisos recados lousa' },
   document: { name: 'Documento', category: 'interativos', w: 1, h: 1, colors: ['#e15b64', '#5b6ee1', '#2fb380'], blocks: true, keywords: 'papel arquivo' },
 
   plant: { name: 'Planta', category: 'natureza', w: 1, h: 1, colors: ['#57b85f', '#3f9a4a', '#8c5bd6'], blocks: true },
@@ -65,9 +75,19 @@ export const CATALOG: Record<string, ObjectDef> = {
   lamp: { name: 'Luminária', category: 'decoracao', w: 1, h: 1, colors: ['#f4d35e', '#f2f2f2'], blocks: true },
   fishbowl: { name: 'Aquário', category: 'decoracao', w: 1, h: 1, colors: ['#3fb6d6'], blocks: true, keywords: 'peixe' },
   cat: { name: 'Gato', category: 'decoracao', w: 1, h: 1, colors: ['#4a4a4a', '#f0a73a', '#f2f2f2'], blocks: true, keywords: 'pet animal' },
+  frame: { name: 'Quadro decorativo', category: 'decoracao', w: 1, h: 1, colors: ['#c99a62', '#3a3f4f'], blocks: true, keywords: 'pintura arte' },
+  barrel: { name: 'Barril', category: 'decoracao', w: 1, h: 1, colors: ['#5a5f73', '#c0392b'], blocks: true },
+  arcade: { name: 'Fliperama', category: 'decoracao', w: 1, h: 1, colors: ['#8c5bd6', '#e15b64', '#3fb6d6'], blocks: true, keywords: 'jogo videogame' },
+  scooter: { name: 'Patinete', category: 'decoracao', w: 1, h: 1, colors: ['#e15b64', '#3a3f4f'], blocks: false, keywords: 'estacionamento' },
+  arrowsign: { name: 'Placa com seta', category: 'decoracao', w: 4, h: 1, colors: ['#f2f2f2', '#f4d35e'], rotations: [1, 3], blocks: false, label: 'PLACA', keywords: 'texto direção' },
+  plaque: { name: 'Letreiro', category: 'decoracao', w: 2, h: 1, colors: ['#2a2e45', '#f2f2f2'], blocks: false, label: 'TEXTO', keywords: 'texto nome' },
+  standsign: { name: 'Placa de pé', category: 'decoracao', w: 1, h: 1, colors: ['#f28fb1', '#5b6ee1', '#f2f2f2'], blocks: true, label: 'P', keywords: 'estacionamento info' },
   screen: { name: 'Biombo', category: 'decoracao', w: 2, h: 1, colors: ['#5b6ee1', '#e8dcc4', '#2fb380'], blocks: true, keywords: 'divisória' },
 
-  wall: { name: 'Parede', category: 'estrutura', w: 1, h: 1, colors: ['#3a3f5c', '#8a3b2e', '#b9a68a', '#e9e4dc'], blocks: true, keywords: 'muro tijolo' },
+  wall: { name: 'Parede', category: 'estrutura', w: 1, h: 1, colors: ['#3a3f5c', '#8a3b2e', '#b9a68a', '#e9e4dc', '#d4dae4', '#252a3d'], blocks: true, keywords: 'muro tijolo' },
+  window: { name: 'Janela', category: 'estrutura', w: 1, h: 1, colors: ['#5b8def', '#7ad1c9'], blocks: true, keywords: 'vidro' },
+  railing: { name: 'Grade de madeira', category: 'estrutura', w: 1, h: 1, colors: ['#7a5532', '#5a5f73'], rotations: [0, 1], blocks: true, keywords: 'cerca corrimão' },
+  stairs: { name: 'Escada', category: 'estrutura', w: 2, h: 1, colors: ['#a8743f', '#8a8fa3'], blocks: true, keywords: 'degraus andar' },
   door: { name: 'Porta', category: 'estrutura', w: 1, h: 1, colors: ['#7a5532', '#4a3322', '#c9c2b5'], blocks: false },
   portalpad: { name: 'Portal', category: 'estrutura', w: 1, h: 1, colors: ['#7c4dff', '#2fb380', '#3fb6d6'], blocks: false, keywords: 'teletransporte sala' },
 };

@@ -43,7 +43,22 @@ function seat(ctx: Ctx, px: number, py: number, color: string, rot: number, size
   if (rot === 3) rrect(ctx, px + pad - 2, py + pad, back, size, 4, dark);
 }
 
-type Draw = (ctx: Ctx, px: number, py: number, color: string, rot: number, o: Pick<PlacedObject, 'x' | 'y'>) => void;
+type Draw = (ctx: Ctx, px: number, py: number, color: string, rot: number, o: Pick<PlacedObject, 'x' | 'y' | 'label'>) => void;
+
+function text(ctx: Ctx, label: string, cx: number, cy: number, maxW: number, color: string, size = 9) {
+  ctx.save();
+  ctx.font = `800 ${size}px "Press Start 2P", Inter, system-ui, sans-serif`;
+  let s = size;
+  while (ctx.measureText(label).width > maxW && s > 4) {
+    s -= 0.5;
+    ctx.font = `800 ${s}px Inter, system-ui, sans-serif`;
+  }
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, cx, cy);
+  ctx.restore();
+}
 
 const DRAW: Record<string, Draw> = {
   desk(ctx, px, py, c) {
@@ -57,6 +72,82 @@ const DRAW: Record<string, Draw> = {
       ctx.fillRect(px + dx + 2, py + 7, 12, 7);
     }
     rrect(ctx, px + 12, py + 18, 12, 4, 1, '#3a3f4f');
+  },
+  desklong(ctx, px, py, c) {
+    shadow(ctx, px + 48, py + 30, 46, 3);
+    rrect(ctx, px + 1, py + 2, 94, 26, 3, c);
+    ctx.fillStyle = shade(c, -0.22);
+    ctx.fillRect(px + 1, py + 24, 94, 4);
+    ctx.fillRect(px + 47, py + 2, 1.5, 22);
+    rrect(ctx, px + 38, py + 5, 20, 12, 2, '#23262f');
+    ctx.fillStyle = '#5fb3f5';
+    ctx.fillRect(px + 40, py + 7, 16, 8);
+    rrect(ctx, px + 40, py + 19, 16, 4, 1, '#3a3f4f');
+  },
+  smalldesk(ctx, px, py, c) {
+    rrect(ctx, px + 1, py + 3, 30, 25, 3, c);
+    rrect(ctx, px + 8, py + 6, 16, 12, 2, '#15171f');
+    ctx.fillStyle = '#e8eaf0';
+    ctx.fillRect(px + 10, py + 8, 12, 8);
+    ctx.fillStyle = '#5b6ee1';
+    ctx.fillRect(px + 12, py + 10, 5, 4);
+  },
+  conftable(ctx, px, py, c) {
+    shadow(ctx, px + 80, py + 126, 76, 4);
+    rrect(ctx, px + 2, py + 4, 156, 120, 8, shade(c, -0.25));
+    rrect(ctx, px + 4, py + 4, 152, 116, 8, c);
+    rrect(ctx, px + 36, py + 26, 88, 72, 4, '#15171f');
+    ctx.fillStyle = '#2d6fc4';
+    ctx.fillRect(px + 40, py + 30, 80, 64);
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(px + 52, py + 42, 56, 40);
+    circle(ctx, px + 80, py + 62, 8, 'rgba(244,211,94,0.8)');
+  },
+  locker(ctx, px, py, c) {
+    rrect(ctx, px + 2, py, 28, 30, 1, c);
+    ctx.fillStyle = shade(c, -0.25);
+    ctx.fillRect(px + 15.5, py, 1, 30);
+    for (const x of [4, 18]) for (const y of [4, 8]) ctx.fillRect(px + x, py + y, 10, 1);
+    ctx.fillStyle = '#f4d35e';
+    ctx.fillRect(px + 12, py + 15, 2, 4);
+    ctx.fillRect(px + 18, py + 15, 2, 4);
+  },
+  console(ctx, px, py, c) {
+    rrect(ctx, px + 2, py + 2, 28, 27, 3, c);
+    ctx.fillStyle = '#15171f';
+    ctx.fillRect(px + 5, py + 5, 22, 10);
+    ctx.fillStyle = '#4fc3ff';
+    ctx.fillRect(px + 7, py + 7, 8, 2);
+    ctx.fillStyle = '#7ad19a';
+    ctx.fillRect(px + 7, py + 11, 14, 2);
+    for (let i = 0; i < 4; i++) circle(ctx, px + 8 + i * 5, py + 22, 1.6, ['#e15b64', '#f4d35e', '#2fb380', '#5b6ee1'][i]);
+  },
+  diningtable(ctx, px, py, c) {
+    shadow(ctx, px + 48, py + 62, 44, 3);
+    rrect(ctx, px + 3, py + 3, 90, 58, 4, shade(c, -0.25));
+    rrect(ctx, px + 3, py + 1, 90, 56, 4, c);
+    circle(ctx, px + 28, py + 22, 7, '#f2f2f2');
+    circle(ctx, px + 28, py + 22, 4, '#c2551f');
+    circle(ctx, px + 66, py + 36, 6, '#f2f2f2');
+    circle(ctx, px + 66, py + 36, 3, '#e15b64');
+  },
+  stool(ctx, px, py, c) {
+    shadow(ctx, px + 16, py + 24, 7, 2);
+    circle(ctx, px + 16, py + 17, 7, shade(c, -0.2));
+    circle(ctx, px + 16, py + 16, 6, c);
+  },
+  coffeecart(ctx, px, py, c) {
+    shadow(ctx, px + 32, py + 62, 30, 3);
+    rrect(ctx, px + 2, py + 14, 60, 46, 4, c);
+    rrect(ctx, px + 2, py + 6, 60, 12, 3, shade(c, 0.25));
+    ctx.fillStyle = '#e15b64';
+    for (let i = 0; i < 6; i++) ctx.fillRect(px + 4 + i * 10, py + 6, 5, 4);
+    rrect(ctx, px + 8, py + 22, 14, 18, 2, '#3a3f4f');
+    rrect(ctx, px + 26, py + 24, 30, 10, 2, '#f2f2f2');
+    for (let i = 0; i < 4; i++) circle(ctx, px + 31 + i * 7, py + 29, 2.2, ['#5b6ee1', '#2fb380', '#f0a73a', '#e15b64'][i]);
+    ctx.fillStyle = shade(c, -0.3);
+    ctx.fillRect(px + 6, py + 46, 52, 2);
   },
   chair(ctx, px, py, c, rot) {
     seat(ctx, px, py, c, rot, 15, 5);
@@ -316,6 +407,124 @@ const DRAW: Record<string, Draw> = {
       ctx.fillRect(x + 2, py + 4 + (i % 2) * 2, 15, 21);
       ctx.fillStyle = 'rgba(255,255,255,0.35)';
       ctx.fillRect(x + 5, py + 8 + (i % 2) * 2, 9, 2);
+    }
+  },
+  frame(ctx, px, py, c) {
+    rrect(ctx, px + 3, py + 4, 26, 20, 2, c);
+    ctx.fillStyle = '#8fc6e8';
+    ctx.fillRect(px + 6, py + 7, 20, 14);
+    ctx.fillStyle = '#4f8f3c';
+    ctx.beginPath();
+    ctx.moveTo(px + 6, py + 21);
+    ctx.lineTo(px + 14, py + 12);
+    ctx.lineTo(px + 20, py + 17);
+    ctx.lineTo(px + 26, py + 13);
+    ctx.lineTo(px + 26, py + 21);
+    ctx.fill();
+  },
+  barrel(ctx, px, py, c) {
+    shadow(ctx, px + 16, py + 28, 11, 3);
+    circle(ctx, px + 16, py + 16, 12, shade(c, -0.2));
+    circle(ctx, px + 16, py + 15, 11, c);
+    ctx.strokeStyle = shade(c, -0.4);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(px + 16, py + 15, 7, 0, Math.PI * 2);
+    ctx.stroke();
+  },
+  arcade(ctx, px, py, c) {
+    rrect(ctx, px + 4, py, 24, 30, 3, c);
+    rrect(ctx, px + 7, py + 3, 18, 12, 2, '#15171f');
+    ctx.fillStyle = '#7ad19a';
+    ctx.fillRect(px + 9, py + 5, 14, 8);
+    ctx.fillStyle = shade(c, -0.3);
+    ctx.fillRect(px + 6, py + 17, 20, 6);
+    circle(ctx, px + 11, py + 20, 1.8, '#f4d35e');
+    circle(ctx, px + 18, py + 20, 1.6, '#e15b64');
+    circle(ctx, px + 22, py + 20, 1.6, '#4fc3ff');
+  },
+  scooter(ctx, px, py, c) {
+    shadow(ctx, px + 16, py + 26, 12, 2);
+    circle(ctx, px + 7, py + 22, 4, '#23262f');
+    circle(ctx, px + 25, py + 22, 4, '#23262f');
+    ctx.fillStyle = c;
+    ctx.fillRect(px + 7, py + 18, 18, 3);
+    ctx.fillRect(px + 22, py + 6, 3, 14);
+    ctx.fillRect(px + 18, py + 6, 10, 2);
+  },
+  arrowsign(ctx, px, py, c, rot, o) {
+    const left = rot === 1;
+    ctx.fillStyle = '#5a5f73';
+    ctx.fillRect(px + 30, py + 22, 3, 8);
+    ctx.fillRect(px + 95, py + 22, 3, 8);
+    ctx.fillStyle = c;
+    ctx.beginPath();
+    if (left) {
+      ctx.moveTo(px + 2, py + 13);
+      ctx.lineTo(px + 14, py + 3);
+      ctx.lineTo(px + 126, py + 3);
+      ctx.lineTo(px + 126, py + 23);
+      ctx.lineTo(px + 14, py + 23);
+    } else {
+      ctx.moveTo(px + 126, py + 13);
+      ctx.lineTo(px + 114, py + 3);
+      ctx.lineTo(px + 2, py + 3);
+      ctx.lineTo(px + 2, py + 23);
+      ctx.lineTo(px + 114, py + 23);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#8a8fa3';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    text(ctx, (o.label ?? '').toUpperCase(), px + 64 + (left ? 6 : -6), py + 13.5, 100, '#2b3a8f', 10);
+  },
+  plaque(ctx, px, py, c, _rot, o) {
+    const dark = parseInt(c.slice(1), 16) < 0x808080;
+    text(ctx, (o.label ?? '').toUpperCase(), px + 32, py + 16, 60, dark ? 'rgba(235,238,248,0.85)' : '#2a2e45', 10);
+  },
+  standsign(ctx, px, py, c, _rot, o) {
+    shadow(ctx, px + 16, py + 29, 9, 2);
+    ctx.fillStyle = '#8a8fa3';
+    ctx.fillRect(px + 15, py + 20, 2, 9);
+    rrect(ctx, px + 5, py + 1, 22, 22, 3, c);
+    rrect(ctx, px + 8, py + 4, 16, 16, 2, 'rgba(255,255,255,0.85)');
+    text(ctx, o.label ?? '', px + 16, py + 12.5, 14, shade(c, -0.35), 11);
+  },
+  window(ctx, px, py, c) {
+    ctx.fillStyle = '#d4dae4';
+    ctx.fillRect(px, py, 32, 32);
+    rrect(ctx, px + 4, py + 6, 24, 20, 1, '#8a93a6');
+    ctx.fillStyle = c;
+    ctx.fillRect(px + 6, py + 8, 20, 16);
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath();
+    ctx.moveTo(px + 6, py + 20);
+    ctx.lineTo(px + 18, py + 8);
+    ctx.lineTo(px + 22, py + 8);
+    ctx.lineTo(px + 10, py + 24);
+    ctx.lineTo(px + 6, py + 24);
+    ctx.fill();
+  },
+  railing(ctx, px, py, c, rot) {
+    ctx.fillStyle = c;
+    if (rot === 1) {
+      ctx.fillRect(px + 14, py, 4, 32);
+      ctx.fillStyle = shade(c, -0.25);
+      ctx.fillRect(px + 13, py + 2, 6, 4);
+    } else {
+      ctx.fillRect(px, py + 22, 32, 4);
+      ctx.fillStyle = shade(c, -0.25);
+      ctx.fillRect(px + 2, py + 20, 4, 10);
+      ctx.fillRect(px + 18, py + 20, 4, 10);
+    }
+  },
+  stairs(ctx, px, py, c) {
+    ctx.fillStyle = shade(c, -0.35);
+    ctx.fillRect(px, py, 64, 32);
+    for (let i = 0; i < 5; i++) {
+      ctx.fillStyle = shade(c, 0.15 - i * 0.08);
+      ctx.fillRect(px + 2, py + 2 + i * 6, 60, 5);
     }
   },
   wall(ctx, px, py, c, _rot, o) {

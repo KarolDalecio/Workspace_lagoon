@@ -1,4 +1,4 @@
-import { isWalkable, type GameMap } from '../../../shared/map';
+import { isWalkable, type Room } from '../../../shared/map';
 
 export interface Point {
   x: number;
@@ -16,7 +16,7 @@ const STEPS: Point[] = [
  * BFS em grade. Se o destino não for caminhável (ou `adjacent` for true),
  * para no vizinho caminhável mais próximo. Retorna os passos sem a origem.
  */
-export function findPath(map: GameMap, sx: number, sy: number, tx: number, ty: number, adjacent = false): Point[] {
+export function findPath(map: Room, sx: number, sy: number, tx: number, ty: number, adjacent = false): Point[] {
   const key = (x: number, y: number) => y * map.width + x;
   const walkable = (x: number, y: number) => isWalkable(map, x, y);
   const goals = new Set<number>();

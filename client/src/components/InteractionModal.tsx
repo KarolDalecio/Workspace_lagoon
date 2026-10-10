@@ -9,6 +9,9 @@ function toEmbedUrl(url: string) {
     if (u.hostname.endsWith('youtube.com') && u.pathname === '/watch' && u.searchParams.get('v'))
       return `https://www.youtube.com/embed/${u.searchParams.get('v')}`;
     if (u.hostname === 'youtu.be') return `https://www.youtube.com/embed${u.pathname}`;
+    if (u.hostname.endsWith('vimeo.com') && /^\/\d+/.test(u.pathname)) return `https://player.vimeo.com/video${u.pathname}`;
+    if (u.hostname.endsWith('twitch.tv') && u.pathname.length > 1)
+      return `https://player.twitch.tv/?channel=${u.pathname.slice(1)}&parent=${location.hostname}`;
   } catch {
     // mantém como veio
   }
@@ -28,7 +31,7 @@ export function InteractionModal({ interaction, onClose }: { interaction: Intera
 
   return (
     <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && onClose()}>
-      <div className={`modal ${kind === 'embed' ? 'wide' : ''}`}>
+      <div className={`modal ${kind === 'embed' || kind === 'video' || kind === 'image' ? 'wide' : ''}`}>
         <header>
           <h2>{title}</h2>
           <div className="tool-row">
@@ -42,7 +45,9 @@ export function InteractionModal({ interaction, onClose }: { interaction: Intera
             </button>
           </div>
         </header>
-        {kind === 'embed' && url && (
+        {(kind === 'embed' || kind === 'video' || kind === 'image') && !url && <p className="hint">Este objeto ainda não tem endereço — configure no Mapmaker.</p>}
+        {kind === 'image' && url && <img className="modal-image" src={url} alt={title} />}
+        {(kind === 'embed' || kind === 'video') && url && (
           <>
             <iframe
               src={toEmbedUrl(url)}

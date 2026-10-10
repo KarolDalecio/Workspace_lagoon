@@ -1,5 +1,5 @@
 import { io, type Socket } from 'socket.io-client';
-import { applyEdit, type GameMap, type MapEdit } from '../../shared/map';
+import { applyEdit, type MapEdit, type SpaceMap } from '../../shared/map';
 import type {
   ChatMessage,
   ChatScope,
@@ -30,11 +30,16 @@ export class World {
   chat: ChatMessage[];
   emotes = new Map<string, { emoji: string; until: number }>();
   disconnected = false;
-  map: GameMap;
+  map: SpaceMap;
   /** Hash público deste navegador, comparado com o dono de cada mesa. */
   ownerTag: string;
   /** Incrementa a cada mudança no mapa, para o motor redesenhar o cenário. */
   mapVersion = 0;
+  /** Edições inversas para desfazer/refazer (só as feitas por esta pessoa). */
+  private undoStack: MapEdit[] = [];
+  private redoStack: MapEdit[] = [];
+  /** Inversos acumulados durante um gesto (ex.: uma pincelada vira um único desfazer). */
+  private group: MapEdit[] | null = null;
   private listeners = new Set<() => void>();
   private version = 0;
 
@@ -55,6 +60,8 @@ export class World {
     });
     socket.on('map:replaced', map => {
       this.map = map;
+      this.undoStack = [];
+      this.redoStack = [];
       this.mapChanged();
     });
     socket.on('map:claims', claims => {
@@ -71,12 +78,19 @@ export class World {
       this.emotes.delete(id);
       this.notify();
     });
-    socket.on('player:moved', ({ id, x, y, dir }) => {
+    socket.on('player:moved', ({ id, room, x, y, dir }) => {
       const p = this.players.get(id);
       if (!p) return;
       p.x = x;
       p.y = y;
       p.dir = dir;
+      if (p.room !== room) {
+        // Mudou de sala (portal): sem animação de caminhada entre salas.
+        p.room = room;
+        p.rx = x;
+        p.ry = y;
+        this.notify();
+      }
     });
     socket.on('player:updated', patch => {
       const p = this.players.get(patch.id);
@@ -124,26 +138,79 @@ export class World {
     this.notify();
   }
 
-  /** Aplica localmente na hora (otimista) e envia ao servidor, que repassa aos outros. */
-  editMap(edit: MapEdit) {
+  /**
+   * Aplica localmente na hora (otimista) e envia ao servidor, que repassa aos outros.
+   * `record` diz em qual pilha guardar o inverso: nova edição limpa o refazer.
+   */
+  editMap(edit: MapEdit, record: 'new' | 'undo' | 'redo' = 'new') {
     const applied = applyEdit(this.map, edit);
     if (!applied) return false;
-    this.socket.emit('map:edit', applied);
+    this.socket.emit('map:edit', applied.op);
+    if (record === 'redo') this.redoStack.push(applied.inverse);
+    else if (record === 'new' && this.group) {
+      this.group.unshift(applied.inverse);
+      this.redoStack = [];
+    } else {
+      this.undoStack.push(applied.inverse);
+      if (this.undoStack.length > 200) this.undoStack.shift();
+      if (record === 'new') this.redoStack = [];
+    }
     this.mapChanged();
     return true;
+  }
+
+  /** Começa um gesto: as edições até endGroup() viram uma única entrada de desfazer. */
+  beginGroup() {
+    this.endGroup();
+    this.group = [];
+  }
+
+  endGroup() {
+    const ops = this.group;
+    this.group = null;
+    if (!ops?.length) return;
+    this.undoStack.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops });
+    if (this.undoStack.length > 200) this.undoStack.shift();
+    this.notify();
+  }
+
+  get canUndo() {
+    return this.undoStack.length > 0;
+  }
+
+  get canRedo() {
+    return this.redoStack.length > 0;
+  }
+
+  /** Desfaz a última edição própria; pula as que ficaram inválidas por edições de outras pessoas. */
+  undo() {
+    this.endGroup();
+    while (this.undoStack.length) if (this.editMap(this.undoStack.pop()!, 'redo')) return true;
+    this.notify();
+    return false;
+  }
+
+  redo() {
+    while (this.redoStack.length) if (this.editMap(this.redoStack.pop()!, 'undo')) return true;
+    this.notify();
+    return false;
   }
 
   resetMap() {
     this.socket.emit('map:reset');
   }
 
-  /** Chave "x,y" da mesa ocupada por este navegador, se houver. */
+  /** Mesa ocupada por este navegador: sala e nome da área. */
   get myDesk() {
-    return Object.entries(this.map.claims).find(([, c]) => c.owner === this.ownerTag)?.[0] ?? null;
+    const key = Object.entries(this.map.claims).find(([, c]) => c.owner === this.ownerTag)?.[0];
+    if (!key) return null;
+    const i = key.indexOf(':');
+    return { room: key.slice(0, i), area: key.slice(i + 1) };
   }
 
-  claimDesk(key: string) {
-    this.socket.emit('desk:claim', key);
+  /** Ocupa a área de mesa em que a pessoa está agora. */
+  claimDesk(area: string) {
+    this.socket.emit('desk:claim', area);
   }
 
   releaseDesk() {

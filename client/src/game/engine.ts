@@ -1,23 +1,30 @@
+import { CATALOG } from '../../../shared/catalog';
 import {
   TILE,
   areaAt,
-  deskTileFor,
+  areaBounds,
+  areaNames,
+  claimKey,
+  deskAreaAt,
+  footprint,
   interactionNear,
-  isDesk,
   isWalkable,
+  onSpotlight,
   parseKey,
   tileKey,
-  type Area,
   type DeskClaim,
-  type Interaction,
+  type EffectKind,
+  type PlacedObject,
   type Rect,
+  type Room,
 } from '../../../shared/map';
 import { PROX_RADIUS, canHear, volumeFor } from '../../../shared/proximity';
 import { EMOTES, type Dir } from '../../../shared/types';
 import type { PeerManager } from '../rtc/peers';
 import type { World } from '../world';
 import { drawAvatar, drawEmote, drawNameTag, drawSmoke, smokeClock } from './avatar';
-import { renderStaticMap } from './mapRenderer';
+import { getImage, renderRoom } from './mapRenderer';
+import { drawObject } from './objects';
 import { findPath, type Point } from './path';
 
 const STEP_MS = 140;
@@ -32,31 +39,57 @@ const DELTA: Record<Dir, [number, number]> = { up: [0, -1], down: [0, 1], left: 
 
 /** O que está ao alcance do jogador para a tecla X. */
 export type Focus =
-  | { type: 'interaction'; key: string; value: Interaction }
-  | { type: 'desk'; key: string; claim: DeskClaim | null };
+  | { type: 'interaction'; obj: PlacedObject }
+  | { type: 'desk'; room: string; area: string; claim: DeskClaim | null };
+
+/** Onde a pessoa está: área privada e/ou holofote. */
+export interface Place {
+  area: string | null;
+  spotlight: boolean;
+}
 
 export type EditPhase = 'down' | 'move' | 'up';
+
+export interface PointerInfo {
+  tile: Point;
+  phase: EditPhase;
+  ctrl: boolean;
+  shift: boolean;
+}
+
+/** Estado visual do Mapmaker, controlado pelo React. */
+export interface MapmakerView {
+  room: string;
+  /** Quais camadas de efeito mostrar sobrepostas. */
+  effects: EffectKind[];
+  /** Destaque forte de uma camada (a selecionada no painel de efeitos). */
+  activeEffect: EffectKind | null;
+  ghost: (Pick<PlacedObject, 'type' | 'color' | 'rot'> & Point) | null;
+  /** Grupo sendo colado/movido: objetos relativos ao canto do retângulo. */
+  ghostGroup: { at: Point; rect: Rect; objects: PlacedObject[] } | null;
+  rect: Rect | null;
+  selected: string[];
+  hoverObject: { id: string; tone: 'select' | 'erase' } | null;
+  brush: Rect | null;
+  /** Mão: arrastar move a câmera. */
+  pan: boolean;
+}
 
 function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v));
 }
 
-function sameFocus(a: Focus | null, b: Focus | null) {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
-/** Loop do jogo: entrada, movimento, câmera, renderização, proximidade e edição. */
+/** Loop do jogo: entrada, movimento, câmera, renderização, proximidade e Mapmaker. */
 export class Engine {
   zoom = 1.6;
-  onAreaChange?: (a: Area | null) => void;
+  onPlaceChange?: (p: Place) => void;
   onFocusChange?: (f: Focus | null) => void;
   onInteract?: (f: Focus) => void;
 
-  /** Modo de edição: cliques pintam o mapa em vez de andar. */
-  editMode = false;
-  onEditPointer?: (tile: Point, phase: EditPhase) => void;
-  /** Retângulo sendo arrastado e tile selecionado no editor. */
-  editOverlay: { rect: Rect | null; selected: Point | null } = { rect: null, selected: null };
+  /** Mapmaker ligado: câmera livre, cliques vão para o editor. */
+  mm: MapmakerView | null = null;
+  onEditPointer?: (p: PointerInfo) => void;
+  onHoverTile?: (p: Point | null) => void;
 
   private ctx: CanvasRenderingContext2D;
   private raf = 0;
@@ -67,12 +100,19 @@ export class Engine {
   private lastFrame = 0;
   private syncTimer = 0;
   private cam = { x: 0, y: 0 };
-  private areaId: string | null | undefined = undefined;
+  /** Centro da câmera livre do Mapmaker, em pixels do mundo. */
+  private freeCam = { x: 0, y: 0 };
+  private place: Place = { area: null, spotlight: false };
+  private placeKey = '';
   private focus: Focus | null = null;
+  private focusKey = '';
   private hover: Point | null = null;
   private dragging = false;
-  private staticMap: HTMLCanvasElement;
-  private staticVersion: number;
+  private panning: { x: number; y: number; cx: number; cy: number } | null = null;
+  private spaceHeld = false;
+  private staticMap = document.createElement('canvas');
+  private staticKey = '';
+  private imageVersion = 0;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -81,8 +121,6 @@ export class Engine {
     private mediaEls: Map<string, HTMLMediaElement>,
   ) {
     this.ctx = canvas.getContext('2d')!;
-    this.staticMap = renderStaticMap(world.map);
-    this.staticVersion = world.mapVersion;
   }
 
   start() {
@@ -90,10 +128,12 @@ export class Engine {
     window.addEventListener('keyup', this.onKeyUp);
     window.addEventListener('blur', this.onBlur);
     window.addEventListener('mouseup', this.onMouseUp);
+    window.addEventListener('mousemove', this.onWindowMouseMove);
     this.canvas.addEventListener('mousedown', this.onMouseDown);
     this.canvas.addEventListener('mousemove', this.onMouseMove);
     this.canvas.addEventListener('mouseleave', this.onMouseLeave);
     this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
+    this.canvas.addEventListener('contextmenu', this.onContextMenu);
     this.raf = requestAnimationFrame(this.frame);
     // Fora do rAF: abas em segundo plano pausam o rAF, mas a conversa precisa continuar.
     this.syncTimer = window.setInterval(() => {
@@ -106,22 +146,64 @@ export class Engine {
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('blur', this.onBlur);
     window.removeEventListener('mouseup', this.onMouseUp);
+    window.removeEventListener('mousemove', this.onWindowMouseMove);
     this.canvas.removeEventListener('mousedown', this.onMouseDown);
     this.canvas.removeEventListener('mousemove', this.onMouseMove);
     this.canvas.removeEventListener('mouseleave', this.onMouseLeave);
     this.canvas.removeEventListener('wheel', this.onWheel);
+    this.canvas.removeEventListener('contextmenu', this.onContextMenu);
     cancelAnimationFrame(this.raf);
     clearInterval(this.syncTimer);
   }
 
   setZoom(z: number) {
-    this.zoom = clamp(z, 0.6, 3);
+    this.zoom = clamp(z, 0.4, 3);
+  }
+
+  /** Liga/desliga o Mapmaker. Ao ligar, a câmera livre começa onde o avatar está. */
+  setMapmaker(view: MapmakerView | null) {
+    if (view && !this.mm) {
+      const me = this.world.self;
+      this.freeCam = { x: me.rx * TILE + TILE / 2, y: me.ry * TILE + TILE / 2 };
+      this.held = [];
+      this.path = [];
+      this.target = null;
+    }
+    this.mm = view;
+  }
+
+  /** Centraliza a câmera livre num tile (lista de objetos, troca de sala). */
+  centerOn(x: number, y: number) {
+    this.freeCam = { x: x * TILE + TILE / 2, y: y * TILE + TILE / 2 };
+  }
+
+  get room(): Room | undefined {
+    return this.world.map.rooms[this.mm?.room ?? this.world.self.room];
   }
 
   goTo(x: number, y: number, adjacent = false) {
     const me = this.world.self;
-    this.path = findPath(this.world.map, me.x, me.y, x, y, adjacent);
+    const room = this.world.map.rooms[me.room];
+    if (!room) return;
+    this.path = findPath(room, me.x, me.y, x, y, adjacent);
     this.target = this.path.at(-1) ?? null;
+  }
+
+  /** Anda até a própria mesa (se estiver nesta sala). Retorna false se a mesa é em outra sala. */
+  walkToDesk() {
+    const desk = this.world.myDesk;
+    const me = this.world.self;
+    if (!desk) return false;
+    if (desk.room !== me.room) return false;
+    const room = this.world.map.rooms[me.room];
+    const tiles = Object.entries(room.privateAreas)
+      .filter(([, n]) => n === desk.area)
+      .map(([k]) => parseKey(k))
+      .filter(t => isWalkable(room, t.x, t.y));
+    if (!tiles.length) return true;
+    tiles.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
+    this.goTo(tiles[0].x, tiles[0].y);
+    return true;
   }
 
   private tileAt(e: MouseEvent): Point {
@@ -134,6 +216,18 @@ export class Engine {
   private onKeyDown = (e: KeyboardEvent) => {
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+    if (this.mm) {
+      if (e.code === 'Space') this.spaceHeld = true;
+      // No Mapmaker as setas movem a câmera, não o avatar.
+      const dir = e.key.startsWith('Arrow') ? KEY_DIR[e.key] : undefined;
+      if (dir) {
+        e.preventDefault();
+        const [dx, dy] = DELTA[dir];
+        this.freeCam.x += dx * TILE * 3;
+        this.freeCam.y += dy * TILE * 3;
+      }
+      return;
+    }
     // Alt+F: acende/apaga o cigarro. preventDefault evita o menu do navegador.
     if (e.altKey && e.code === 'KeyF' && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
@@ -149,7 +243,7 @@ export class Engine {
       this.target = null;
       return;
     }
-    if ((e.key === 'x' || e.key === 'X') && !e.repeat && !this.editMode) {
+    if ((e.key === 'x' || e.key === 'X') && !e.repeat) {
       if (this.focus) this.onInteract?.(this.focus);
       return;
     }
@@ -158,45 +252,69 @@ export class Engine {
   };
 
   private onKeyUp = (e: KeyboardEvent) => {
+    if (e.code === 'Space') this.spaceHeld = false;
     const dir = KEY_DIR[e.key];
     if (dir) this.held = this.held.filter(d => d !== dir);
   };
 
   private onBlur = () => {
     this.held = [];
+    this.spaceHeld = false;
+  };
+
+  private onContextMenu = (e: MouseEvent) => {
+    if (this.mm) e.preventDefault();
   };
 
   private onMouseDown = (e: MouseEvent) => {
-    if (e.button !== 0) return;
     const tile = this.tileAt(e);
-    if (this.editMode) {
+    if (this.mm) {
       e.preventDefault();
+      // Mão, botão do meio ou espaço+arrastar movem a câmera.
+      if (this.mm.pan || e.button === 1 || this.spaceHeld) {
+        this.panning = { x: e.clientX, y: e.clientY, cx: this.freeCam.x, cy: this.freeCam.y };
+        return;
+      }
+      if (e.button !== 0) return;
       this.dragging = true;
-      this.onEditPointer?.(tile, 'down');
+      this.onEditPointer?.({ tile, phase: 'down', ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey });
       return;
     }
-    this.goTo(tile.x, tile.y);
+    if (e.button === 0) this.goTo(tile.x, tile.y);
+  };
+
+  private onWindowMouseMove = (e: MouseEvent) => {
+    if (!this.panning) return;
+    this.freeCam.x = this.panning.cx - (e.clientX - this.panning.x) / this.zoom;
+    this.freeCam.y = this.panning.cy - (e.clientY - this.panning.y) / this.zoom;
   };
 
   private onMouseMove = (e: MouseEvent) => {
     const tile = this.tileAt(e);
     const changed = !this.hover || this.hover.x !== tile.x || this.hover.y !== tile.y;
     this.hover = tile;
-    if (this.dragging && changed) this.onEditPointer?.(tile, 'move');
+    if (!changed) return;
+    this.onHoverTile?.(tile);
+    if (this.dragging) this.onEditPointer?.({ tile, phase: 'move', ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey });
   };
 
   private onMouseUp = (e: MouseEvent) => {
+    if (this.panning) {
+      this.panning = null;
+      return;
+    }
     if (!this.dragging) return;
     this.dragging = false;
-    this.onEditPointer?.(this.tileAt(e), 'up');
+    this.onEditPointer?.({ tile: this.hover ?? this.tileAt(e), phase: 'up', ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey });
   };
 
   private onMouseLeave = () => {
     this.hover = null;
+    this.onHoverTile?.(null);
   };
 
   private onWheel = (e: WheelEvent) => {
-    if (!e.ctrlKey) return;
+    if (!e.ctrlKey && !this.mm) return;
     e.preventDefault();
     this.setZoom(this.zoom * (e.deltaY < 0 ? 1.1 : 0.9));
   };
@@ -205,7 +323,7 @@ export class Engine {
     const dt = this.lastFrame ? Math.min(now - this.lastFrame, 100) : 16;
     this.lastFrame = now;
     if (this.world.players.has(this.world.selfId)) {
-      this.step(now);
+      if (!this.mm) this.step(now);
       this.animate(dt);
       this.updateFocus();
       this.render(now);
@@ -216,6 +334,8 @@ export class Engine {
   private step(now: number) {
     if (now - this.lastStep < STEP_MS) return;
     const me = this.world.self;
+    const room = this.world.map.rooms[me.room];
+    if (!room) return;
     let dir = this.held.at(-1);
     let next: Point;
     if (dir) {
@@ -236,11 +356,13 @@ export class Engine {
     this.lastStep = now;
     const prevDir = me.dir;
     let moved = false;
-    if (isWalkable(this.world.map, next.x, next.y)) {
+    if (isWalkable(room, next.x, next.y)) {
       me.x = next.x;
       me.y = next.y;
       moved = true;
       if (!this.held.length) this.path.shift();
+      // Pisou num portal: o servidor muda a sala; para o caminho atual.
+      if (room.portals[tileKey(me.x, me.y)]) this.path = [];
     } else this.path = [];
     if (!this.path.length) this.target = null;
     me.dir = dir;
@@ -269,21 +391,22 @@ export class Engine {
     }
   }
 
-  /** Sentado numa cadeira de mesa → mesa; senão, objeto interativo ao lado. */
+  /** Dentro de uma área de mesa → mesa; senão, objeto interativo ao lado. */
   private updateFocus() {
     const me = this.world.self;
-    const map = this.world.map;
+    const room = this.world.map.rooms[me.room];
     let focus: Focus | null = null;
-    if (!this.editMode) {
-      if (isDesk(map, me.x, me.y)) {
-        const key = tileKey(me.x, me.y);
-        focus = { type: 'desk', key, claim: map.claims[key] ?? null };
-      } else {
-        const near = interactionNear(map, me.x, me.y);
-        if (near) focus = { type: 'interaction', ...near };
+    if (!this.mm && room) {
+      const desk = deskAreaAt(room, me.x, me.y);
+      if (desk) focus = { type: 'desk', room: room.id, area: desk, claim: this.world.map.claims[claimKey(room.id, desk)] ?? null };
+      else {
+        const obj = interactionNear(room, me.x, me.y);
+        if (obj) focus = { type: 'interaction', obj };
       }
     }
-    if (!sameFocus(focus, this.focus)) {
+    const key = JSON.stringify(focus);
+    if (key !== this.focusKey) {
+      this.focusKey = key;
       this.focus = focus;
       this.onFocusChange?.(focus);
     }
@@ -305,10 +428,13 @@ export class Engine {
       if (p) el.volume = volumeFor(map, me, p);
     }
 
-    const area = areaAt(map, me.x, me.y);
-    if ((area?.id ?? null) !== this.areaId) {
-      this.areaId = area?.id ?? null;
-      this.onAreaChange?.(area);
+    const room = map.rooms[me.room];
+    const place: Place = { area: room ? areaAt(room, me.x, me.y) : null, spotlight: room ? onSpotlight(room, me.x, me.y) : false };
+    const key = JSON.stringify(place);
+    if (key !== this.placeKey) {
+      this.placeKey = key;
+      this.place = place;
+      this.onPlaceChange?.(place);
     }
   }
 
@@ -326,22 +452,25 @@ export class Engine {
     ctx.fillText(text, cx, y + (size + 3) / 2 + 0.5);
   }
 
-  private outline(x: number, y: number, w: number, h: number, color: string, dash: number[] = []) {
+  private outline(r: Rect, color: string, dash: number[] = [], width = 2) {
     const { ctx } = this;
     ctx.save();
     ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = width;
     ctx.setLineDash(dash);
-    ctx.strokeRect(x * TILE + 1, y * TILE + 1, w * TILE - 2, h * TILE - 2);
+    ctx.strokeRect(r.x * TILE + 1, r.y * TILE + 1, r.w * TILE - 2, r.h * TILE - 2);
     ctx.restore();
   }
 
   private render(now: number) {
     const { canvas, ctx } = this;
     const map = this.world.map;
-    if (this.staticVersion !== this.world.mapVersion) {
-      renderStaticMap(map, 2, this.staticMap);
-      this.staticVersion = this.world.mapVersion;
+    const room = this.room;
+    if (!room) return;
+    const key = `${room.id}:${this.world.mapVersion}:${this.imageVersion}`;
+    if (key !== this.staticKey) {
+      renderRoom(room, 2, this.staticMap, () => this.imageVersion++);
+      this.staticKey = key;
     }
 
     const dpr = window.devicePixelRatio || 1;
@@ -359,13 +488,23 @@ export class Engine {
     const s = dpr * z;
     const viewW = w / z;
     const viewH = h / z;
-    const mapW = map.width * TILE;
-    const mapH = map.height * TILE;
+    const mapW = room.width * TILE;
+    const mapH = room.height * TILE;
     const me = this.world.self;
-    const cx = me.rx * TILE + TILE / 2;
-    const cy = me.ry * TILE + TILE / 2;
-    const camX = mapW <= viewW ? (mapW - viewW) / 2 : clamp(cx - viewW / 2, 0, mapW - viewW);
-    const camY = mapH <= viewH ? (mapH - viewH) / 2 : clamp(cy - viewH / 2, 0, mapH - viewH);
+    let camX: number;
+    let camY: number;
+    if (this.mm) {
+      // Câmera livre: pode passar um pouco das bordas para editar os cantos com folga.
+      this.freeCam.x = clamp(this.freeCam.x, -viewW / 4, mapW + viewW / 4);
+      this.freeCam.y = clamp(this.freeCam.y, -viewH / 4, mapH + viewH / 4);
+      camX = this.freeCam.x - viewW / 2;
+      camY = this.freeCam.y - viewH / 2;
+    } else {
+      const cx = me.rx * TILE + TILE / 2;
+      const cy = me.ry * TILE + TILE / 2;
+      camX = mapW <= viewW ? (mapW - viewW) / 2 : clamp(cx - viewW / 2, 0, mapW - viewW);
+      camY = mapH <= viewH ? (mapH - viewH) / 2 : clamp(cy - viewH / 2, 0, mapH - viewH);
+    }
     const ox = Math.round(-camX * s);
     const oy = Math.round(-camY * s);
     this.cam.x = -ox / s;
@@ -374,48 +513,42 @@ export class Engine {
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(this.staticMap, 0, 0, mapW, mapH);
 
-    // Plaquinhas das mesas ocupadas, no lado da mesa oposto à cadeira (para não ficar sob o nome de quem senta)
-    for (const [key, claim] of Object.entries(map.claims)) {
-      const chair = parseKey(key);
-      const desk = deskTileFor(map, chair.x, chair.y);
-      if (!desk) continue;
+    // Plaquinhas das mesas ocupadas: no topo da área de mesa
+    for (const name of areaNames(room)) {
+      const claim = map.claims[claimKey(room.id, name)];
+      if (!claim) continue;
+      const b = areaBounds(room, name);
+      if (!b) continue;
       const mine = claim.owner === this.world.ownerTag;
-      this.label(claim.name, desk.x * TILE + 16, desk.y * TILE + (desk.y < chair.y ? 1 : 22), mine ? 'rgba(38,150,102,0.95)' : 'rgba(22,24,38,0.85)', 5.5);
+      this.label(claim.name, (b.x + b.w / 2) * TILE, (b.y + b.h) * TILE - 10, mine ? 'rgba(38,150,102,0.95)' : 'rgba(22,24,38,0.85)', 5.5);
     }
 
-    const area = this.areaId ? map.areas.find(a => a.id === this.areaId) : null;
-    if (area && !this.editMode) this.outline(area.x, area.y, area.w, area.h, 'rgba(130,210,255,0.85)', [6, 4]);
-
-    if (this.focus) {
-      const pulse = 0.55 + Math.sin(now / 250) * 0.3;
-      const color = `rgba(255,214,90,${pulse})`;
-      const { x, y } = parseKey(this.focus.key);
-      if (this.focus.type === 'desk') {
-        this.outline(x, y, 1, 1, color);
-        const desk = deskTileFor(map, x, y);
-        if (desk) this.outline(desk.x, desk.y, 1, 1, color);
-      } else {
-        // Destaca todos os tiles do mesmo objeto com a mesma interação (ex.: quadro de 2 tiles).
-        const json = JSON.stringify(this.focus.value);
-        const obj = map.objects[y][x];
-        let x0 = x;
-        let x1 = x;
-        while (map.objects[y][x0 - 1] === obj && JSON.stringify(map.interactions[tileKey(x0 - 1, y)]) === json) x0--;
-        while (map.objects[y][x1 + 1] === obj && JSON.stringify(map.interactions[tileKey(x1 + 1, y)]) === json) x1++;
-        this.outline(x0, y, x1 - x0 + 1, 1, color);
+    if (!this.mm) {
+      if (this.place.area) {
+        const b = areaBounds(room, this.place.area);
+        if (b) {
+          // Só os tiles da área (ela pode ter formato irregular)
+          ctx.fillStyle = 'rgba(130,210,255,0.08)';
+          for (const [k, n] of Object.entries(room.privateAreas))
+            if (n === this.place.area) {
+              const t = parseKey(k);
+              ctx.fillRect(t.x * TILE, t.y * TILE, TILE, TILE);
+            }
+          this.outline(b, 'rgba(130,210,255,0.85)', [6, 4]);
+        }
+      }
+      this.renderFocus(room, now);
+      if (this.target) {
+        const pulse = 4 + Math.sin(now / 150) * 1.5;
+        ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.ellipse(this.target.x * TILE + 16, this.target.y * TILE + 26, pulse + 4, pulse / 2 + 2, 0, 0, Math.PI * 2);
+        ctx.stroke();
       }
     }
 
-    if (this.target && !this.editMode) {
-      const pulse = 4 + Math.sin(now / 150) * 1.5;
-      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.ellipse(this.target.x * TILE + 16, this.target.y * TILE + 26, pulse + 4, pulse / 2 + 2, 0, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    const players = [...this.world.players.values()].sort((a, b) => a.ry - b.ry);
+    const players = [...this.world.players.values()].filter(p => p.room === room.id).sort((a, b) => a.ry - b.ry);
     for (const p of players) {
       const px = p.rx * TILE;
       const py = p.ry * TILE;
@@ -430,28 +563,49 @@ export class Engine {
       drawAvatar(ctx, px, py, p.avatar, p.dir, p.walk / STEP_MS, moving, p.action === 'smoke' ? smokeClock(now, p.id) : undefined);
     }
     for (const p of players) if (p.action === 'smoke') drawSmoke(ctx, p.rx * TILE, p.ry * TILE, p.dir, smokeClock(now, p.id));
-    for (const p of players) drawNameTag(ctx, p.rx * TILE + 16, p.ry * TILE + 31, p.name, p.id === me.id, p.audio);
+
+    // Primeiro plano fica acima dos avatares (ex.: copas de árvores, teto).
+    if (room.foreground) {
+      const img = getImage(room.foreground, () => this.imageVersion++);
+      if (img) ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight);
+    }
+
+    for (const p of players) {
+      const spot = onSpotlight(room, p.x, p.y);
+      drawNameTag(ctx, p.rx * TILE + 16, p.ry * TILE + 31, (spot ? '📢 ' : '') + p.name, p.id === me.id, p.audio);
+    }
     for (const [id, e] of this.world.emotes) {
       const p = this.world.players.get(id);
       if (!p || e.until < now) {
         this.world.emotes.delete(id);
         continue;
       }
-      drawEmote(ctx, p.rx * TILE + 16, p.ry * TILE, e.emoji, (e.until - now) / 3000);
+      if (p.room === room.id) drawEmote(ctx, p.rx * TILE + 16, p.ry * TILE, e.emoji, (e.until - now) / 3000);
     }
 
-    if (this.editMode) this.renderEditOverlay(viewW, viewH);
+    if (this.mm) this.renderMapmaker(room, viewW, viewH);
   }
 
-  private renderEditOverlay(viewW: number, viewH: number) {
+  private renderFocus(room: Room, now: number) {
+    if (!this.focus) return;
+    const pulse = 0.55 + Math.sin(now / 250) * 0.3;
+    const color = `rgba(255,214,90,${pulse})`;
+    if (this.focus.type === 'desk') {
+      const b = areaBounds(room, this.focus.area);
+      if (b) this.outline(b, color);
+    } else this.outline(footprint(this.focus.obj), color);
+  }
+
+  private renderMapmaker(room: Room, viewW: number, viewH: number) {
     const { ctx } = this;
-    const map = this.world.map;
+    const mm = this.mm!;
     const x0 = Math.max(0, Math.floor(this.cam.x / TILE));
     const y0 = Math.max(0, Math.floor(this.cam.y / TILE));
-    const x1 = Math.min(map.width, Math.ceil((this.cam.x + viewW) / TILE));
-    const y1 = Math.min(map.height, Math.ceil((this.cam.y + viewH) / TILE));
+    const x1 = Math.min(room.width, Math.ceil((this.cam.x + viewW) / TILE));
+    const y1 = Math.min(room.height, Math.ceil((this.cam.y + viewH) / TILE));
 
-    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    // Grade
+    ctx.strokeStyle = 'rgba(255,255,255,0.13)';
     ctx.lineWidth = 0.5;
     ctx.beginPath();
     for (let x = x0; x <= x1; x++) {
@@ -463,43 +617,87 @@ export class Engine {
       ctx.lineTo(x1 * TILE, y * TILE);
     }
     ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,214,90,0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(0, 0, room.width * TILE, room.height * TILE);
 
-    for (const a of map.areas) {
-      ctx.fillStyle = 'rgba(130,210,255,0.12)';
-      ctx.fillRect(a.x * TILE, a.y * TILE, a.w * TILE, a.h * TILE);
-      this.outline(a.x, a.y, a.w, a.h, 'rgba(130,210,255,0.9)', [6, 4]);
-      this.label(`🔒 ${a.name}`, (a.x + a.w / 2) * TILE, a.y * TILE + 3, 'rgba(40,90,140,0.9)', 7);
+    // Camadas de efeito (cores no estilo do Gather)
+    const alpha = (k: EffectKind) => (mm.activeEffect === k ? 0.5 : mm.activeEffect ? 0.18 : 0.32);
+    const show = new Set(mm.effects);
+    const fillTiles = (keys: string[], color: string) => {
+      ctx.fillStyle = color;
+      for (const k of keys) {
+        const t = parseKey(k);
+        if (t.x >= x0 && t.x < x1 && t.y >= y0 && t.y < y1) ctx.fillRect(t.x * TILE + 0.5, t.y * TILE + 0.5, TILE - 1, TILE - 1);
+      }
+    };
+    if (show.has('private')) {
+      fillTiles(Object.keys(room.privateAreas), `rgba(236,72,200,${alpha('private')})`);
+      for (const name of areaNames(room)) {
+        const b = areaBounds(room, name);
+        if (b) this.label(`${room.areaMeta[name]?.desk ? '🪑 ' : '🔒 '}${name}`, (b.x + b.w / 2) * TILE, b.y * TILE + 2, 'rgba(150,30,120,0.9)', 6);
+      }
+    }
+    if (show.has('impassable')) fillTiles(Object.keys(room.impassable), `rgba(229,57,53,${alpha('impassable')})`);
+    if (show.has('spawn')) fillTiles(Object.keys(room.spawn), `rgba(76,217,100,${alpha('spawn') + 0.15})`);
+    if (show.has('spotlight')) {
+      fillTiles(Object.keys(room.spotlight), `rgba(255,170,40,${alpha('spotlight') + 0.1})`);
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (const k of Object.keys(room.spotlight)) {
+        const t = parseKey(k);
+        ctx.fillText('📢', t.x * TILE + 16, t.y * TILE + 16);
+      }
+    }
+    if (show.has('portal')) {
+      fillTiles(Object.keys(room.portals), `rgba(110,80,255,${alpha('portal') + 0.2})`);
+      for (const [k, target] of Object.entries(room.portals)) {
+        const t = parseKey(k);
+        const dest = this.world.map.rooms[target.room];
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 13px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('↪', t.x * TILE + 16, t.y * TILE + 14);
+        if (dest) this.label(`${dest.name} (${target.x},${target.y})`, t.x * TILE + 16, t.y * TILE + 22, 'rgba(80,50,200,0.9)', 5);
+      }
     }
 
-    const sp = map.spawn;
-    ctx.fillStyle = 'rgba(90,220,150,0.15)';
-    ctx.fillRect(sp.x * TILE, sp.y * TILE, sp.w * TILE, sp.h * TILE);
-    this.outline(sp.x, sp.y, sp.w, sp.h, 'rgba(90,220,150,0.9)', [4, 3]);
-    this.label('Entrada', (sp.x + sp.w / 2) * TILE, sp.y * TILE + 3, 'rgba(30,120,80,0.95)', 7);
-
-    for (const key of Object.keys(map.interactions)) {
-      const { x, y } = parseKey(key);
-      ctx.fillStyle = '#ffd65a';
-      ctx.beginPath();
-      ctx.arc(x * TILE + 27, y * TILE + 5, 3.5, 0, Math.PI * 2);
-      ctx.fill();
+    // Seleção e destaques
+    for (const id of mm.selected) {
+      const o = room.objects.find(ob => ob.id === id);
+      if (o) this.outline(footprint(o), '#4fc3ff', [], 2);
     }
-    for (let y = y0; y < y1; y++)
-      for (let x = x0; x < x1; x++)
-        if (isDesk(map, x, y) && !map.claims[tileKey(x, y)]) {
-          ctx.fillStyle = 'rgba(90,220,150,0.9)';
-          ctx.beginPath();
-          ctx.arc(x * TILE + 16, y * TILE + 16, 2.5, 0, Math.PI * 2);
-          ctx.fill();
+    if (mm.hoverObject) {
+      const o = room.objects.find(ob => ob.id === mm.hoverObject!.id);
+      if (o) {
+        const f = footprint(o);
+        if (mm.hoverObject.tone === 'erase') {
+          ctx.fillStyle = 'rgba(229,57,53,0.35)';
+          ctx.fillRect(f.x * TILE, f.y * TILE, f.w * TILE, f.h * TILE);
         }
-
-    const { rect, selected } = this.editOverlay;
-    if (rect) {
-      ctx.fillStyle = 'rgba(255,214,90,0.18)';
-      ctx.fillRect(rect.x * TILE, rect.y * TILE, rect.w * TILE, rect.h * TILE);
-      this.outline(rect.x, rect.y, rect.w, rect.h, '#ffd65a');
+        this.outline(f, mm.hoverObject.tone === 'erase' ? '#ff5252' : 'rgba(79,195,255,0.8)');
+      }
     }
-    if (selected) this.outline(selected.x, selected.y, 1, 1, '#ff8a5b');
-    if (this.hover) this.outline(this.hover.x, this.hover.y, 1, 1, 'rgba(255,255,255,0.9)');
+    if (mm.rect) {
+      ctx.fillStyle = 'rgba(79,195,255,0.12)';
+      ctx.fillRect(mm.rect.x * TILE, mm.rect.y * TILE, mm.rect.w * TILE, mm.rect.h * TILE);
+      this.outline(mm.rect, '#4fc3ff', [5, 4]);
+    }
+    if (mm.ghostGroup) {
+      const { at, rect, objects } = mm.ghostGroup;
+      ctx.globalAlpha = 0.6;
+      for (const o of objects) drawObject(ctx, o, (at.x + o.x) * TILE, (at.y + o.y) * TILE);
+      ctx.globalAlpha = 1;
+      this.outline({ x: at.x, y: at.y, w: rect.w, h: rect.h }, '#4fc3ff', [5, 4]);
+    }
+    if (mm.ghost) {
+      const def = CATALOG[mm.ghost.type];
+      ctx.globalAlpha = 0.65;
+      drawObject(ctx, { ...mm.ghost }, mm.ghost.x * TILE, mm.ghost.y * TILE);
+      ctx.globalAlpha = 1;
+      this.outline({ x: mm.ghost.x, y: mm.ghost.y, w: def?.w ?? 1, h: def?.h ?? 1 }, 'rgba(255,255,255,0.8)', [3, 3]);
+    } else if (mm.brush) this.outline(mm.brush, 'rgba(255,255,255,0.9)');
   }
 }

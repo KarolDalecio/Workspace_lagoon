@@ -1,4 +1,5 @@
-import { TILE, type Floor, type GameMap, type Obj } from '../../../shared/map';
+import { TILE, footprint, type Floor, type Room } from '../../../shared/map';
+import { drawObject } from './objects';
 
 const T = TILE;
 
@@ -86,6 +87,17 @@ export function drawFloor(ctx: CanvasRenderingContext2D, f: Floor, x: number, y:
         ctx.stroke();
       }
       break;
+    case 'stone':
+      ctx.fillStyle = '#b9b4ab';
+      ctx.fillRect(px, py, T, T);
+      ctx.fillStyle = '#a7a299';
+      ctx.fillRect(px, py + (x % 2 ? 0 : 15), T, 1.5);
+      ctx.fillRect(px + 15, py, 1.5, T);
+      break;
+    case 'dark':
+      ctx.fillStyle = (x + y) % 2 ? '#2a2d3f' : '#2d3044';
+      ctx.fillRect(px, py, T, T);
+      break;
     case 'rug':
       ctx.fillStyle = '#b5553d';
       ctx.fillRect(px, py, T, T);
@@ -102,141 +114,36 @@ export function drawFloor(ctx: CanvasRenderingContext2D, f: Floor, x: number, y:
   }
 }
 
-/** `map` é usado para olhar os vizinhos (ex.: monitor na mesa); null para desenhar ícones. */
-export function drawObject(ctx: CanvasRenderingContext2D, map: GameMap | null, o: Obj, x: number, y: number) {
-  const px = x * T;
-  const py = y * T;
-  const h = hash(x, y);
-  switch (o) {
-    case 'wall':
-      ctx.fillStyle = '#3a3f5c';
-      ctx.fillRect(px, py, T, T);
-      ctx.fillStyle = '#525878';
-      ctx.fillRect(px, py, T, 7);
-      ctx.fillStyle = '#33374f';
-      ctx.fillRect(px, py + 18, T, 1);
-      ctx.fillRect(px + (y % 2 ? 8 : 24), py + 7, 1, 11);
-      ctx.fillRect(px + (y % 2 ? 24 : 8), py + 19, 1, 13);
-      break;
-    case 'desk':
-      rrect(ctx, px, py + 2, T, T - 3, 2, '#9b6a3c');
-      ctx.fillStyle = '#7d5330';
-      ctx.fillRect(px, py + T - 5, T, 4);
-      if (!map || map.objects[y - 1]?.[x] === 'chair' || map.objects[y + 1]?.[x] === 'chair') {
-        rrect(ctx, px + 7, py + 6, 18, 12, 2, '#23262f');
-        ctx.fillStyle = h % 3 ? '#5fb3f5' : '#7ad19a';
-        ctx.fillRect(px + 9, py + 8, 14, 8);
-        ctx.fillStyle = '#23262f';
-        ctx.fillRect(px + 14, py + 18, 4, 4);
-      }
-      break;
-    case 'chair':
-      rrect(ctx, px + 8, py + 8, 16, 16, 4, '#3d4466');
-      rrect(ctx, px + 8, py + 6, 16, 5, 2, '#2f3552');
-      break;
-    case 'plant':
-      rrect(ctx, px + 10, py + 19, 12, 10, 2, '#a0522d');
-      circle(ctx, px + 11, py + 15, 6, '#3f9a4a');
-      circle(ctx, px + 21, py + 15, 6, '#3f9a4a');
-      circle(ctx, px + 16, py + 11, 8, '#57b85f');
-      break;
-    case 'tree':
-      ctx.fillStyle = 'rgba(0,0,0,0.18)';
-      ctx.beginPath();
-      ctx.ellipse(px + 16, py + 29, 12, 4, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#6b4423';
-      ctx.fillRect(px + 13, py + 16, 6, 13);
-      circle(ctx, px + 16, py + 8, 15, '#2f7d3a');
-      circle(ctx, px + 11, py + 4, 9, '#3f9a4a');
-      circle(ctx, px + 21, py + 9, 7, '#3a8f44');
-      break;
-    case 'sofa':
-      rrect(ctx, px + 1, py + 5, T - 2, 24, 6, '#6c4fa3');
-      rrect(ctx, px + 1, py + 3, T - 2, 9, 4, '#5a418a');
-      break;
-    case 'table':
-      ctx.fillStyle = '#a8743f';
-      ctx.fillRect(px, py + 1, T, T - 2);
-      ctx.fillStyle = '#8a5d30';
-      ctx.fillRect(px, py + T - 4, T, 3);
-      if (h % 3 === 0) circle(ctx, px + 10 + (h % 12), py + 12, 3.5, '#f2f2f2');
-      break;
-    case 'counter':
-      ctx.fillStyle = '#bfc4cf';
-      ctx.fillRect(px, py, T, T);
-      ctx.fillStyle = '#f3f4f7';
-      ctx.fillRect(px, py + 4, T, 16);
-      if (h % 4 === 0) rrect(ctx, px + 7, py + 7, 18, 10, 3, '#9aa3b5');
-      else if (h % 4 === 1) circle(ctx, px + 16, py + 12, 4, '#e15b64');
-      break;
-    case 'whiteboard':
-      ctx.fillStyle = '#8a8fa3';
-      ctx.fillRect(px, py + 3, T, 22);
-      ctx.fillStyle = '#fbfbfd';
-      ctx.fillRect(px + 1, py + 5, T - 2, 18);
-      ctx.strokeStyle = h % 2 ? '#e15b64' : '#5b6ee1';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(px + 5, py + 12);
-      ctx.lineTo(px + 12, py + 9);
-      ctx.lineTo(px + 18, py + 15);
-      ctx.lineTo(px + 27, py + 10);
-      ctx.stroke();
-      break;
-    case 'tv':
-      ctx.fillStyle = '#2b2f3a';
-      ctx.fillRect(px + 13, py + 22, 6, 6);
-      rrect(ctx, px, py + 2, T, 21, 2, '#15171f');
-      ctx.fillStyle = (x + y) % 2 ? '#3b6fd6' : '#4f86e8';
-      ctx.fillRect(px + 2, py + 4, T - 4, 17);
-      ctx.fillStyle = 'rgba(255,255,255,0.18)';
-      ctx.fillRect(px + 2, py + 4, T - 4, 5);
-      break;
-    case 'board': {
-      ctx.fillStyle = '#7a5532';
-      ctx.fillRect(px, py + 2, T, 24);
-      ctx.fillStyle = '#c99a62';
-      ctx.fillRect(px + 2, py + 4, T - 4, 20);
-      const notes = ['#fff59d', '#ffccbc', '#c5e1a5', '#b3e5fc'];
-      for (let i = 0; i < 3; i++) {
-        ctx.fillStyle = notes[(h >> i) % notes.length];
-        ctx.fillRect(px + 4 + i * 9, py + 6 + ((h >> (i + 3)) % 8), 7, 7);
-        circle(ctx, px + 7.5 + i * 9, py + 7 + ((h >> (i + 3)) % 8), 1, '#e15b64');
-      }
-      break;
-    }
-    case 'bookshelf': {
-      ctx.fillStyle = '#6b4423';
-      ctx.fillRect(px, py, T, T);
-      const colors = ['#e15b64', '#5b6ee1', '#2fb380', '#f0a73a', '#8c5bd6', '#f2f2f2'];
-      for (let row = 0; row < 2; row++) {
-        let bx = px + 2;
-        let i = 0;
-        while (bx < px + T - 4) {
-          const bw = 3 + ((h >> (i + row * 5)) % 3);
-          ctx.fillStyle = colors[(h >> (i * 2 + row)) % colors.length];
-          ctx.fillRect(bx, py + 3 + row * 15, bw, 11);
-          bx += bw + 1;
-          i++;
-        }
-      }
-      break;
-    }
+/** Imagens (fundo/primeiro plano) já carregadas, compartilhadas entre renderizações. */
+const images = new Map<string, HTMLImageElement>();
+
+/** Retorna a imagem se já carregou; senão começa a carregar e chama `onLoad` quando terminar. */
+export function getImage(url: string, onLoad: () => void) {
+  let img = images.get(url);
+  if (!img) {
+    img = new Image();
+    img.onload = onLoad;
+    img.src = url;
+    images.set(url, img);
   }
+  return img.complete && img.naturalWidth ? img : null;
 }
 
-/** Desenha o mapa estático em um canvas fora da tela (refeito só quando o mapa muda). */
-export function renderStaticMap(map: GameMap, scale = 2, canvas = document.createElement('canvas')) {
-  canvas.width = map.width * T * scale;
-  canvas.height = map.height * T * scale;
+/**
+ * Camada estática da sala (refeita só quando a sala muda): piso, imagem de fundo
+ * e objetos, ordenados pela base para o que está mais abaixo ficar na frente.
+ */
+export function renderRoom(room: Room, scale: number, canvas: HTMLCanvasElement, onImage: () => void) {
+  canvas.width = room.width * T * scale;
+  canvas.height = room.height * T * scale;
   const ctx = canvas.getContext('2d')!;
   ctx.scale(scale, scale);
-  for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) drawFloor(ctx, map.floor[y][x], x, y);
-  for (let y = 0; y < map.height; y++)
-    for (let x = 0; x < map.width; x++) {
-      const o = map.objects[y][x];
-      if (o) drawObject(ctx, map, o, x, y);
-    }
+  for (let y = 0; y < room.height; y++) for (let x = 0; x < room.width; x++) drawFloor(ctx, room.floor[y][x], x, y);
+  if (room.background) {
+    const img = getImage(room.background, onImage);
+    if (img) ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight);
+  }
+  const sorted = [...room.objects].sort((a, b) => footprint(a).y + footprint(a).h - (footprint(b).y + footprint(b).h));
+  for (const o of sorted) drawObject(ctx, o);
   return canvas;
 }

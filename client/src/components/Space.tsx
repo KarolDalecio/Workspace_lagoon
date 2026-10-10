@@ -16,15 +16,15 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { parseKey, type Area, type Interaction } from '../../../shared/map';
+import type { Interaction } from '../../../shared/map';
 import { EMOTES } from '../../../shared/types';
-import { Engine, type Focus } from '../game/engine';
+import { Engine, type Focus, type Place } from '../game/engine';
 import type { LocalMedia } from '../rtc/media';
 import { PeerManager } from '../rtc/peers';
 import type { World } from '../world';
 import { DeviceSettings } from './DeviceSettings';
 import { InteractionModal } from './InteractionModal';
-import { MapEditor } from './MapEditor';
+import { Mapmaker } from './Mapmaker';
 import { ChatPanel, PeoplePanel } from './Panels';
 import { VideoStrip } from './VideoStrip';
 
@@ -36,8 +36,9 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
   const engineRef = useRef<Engine | null>(null);
   const [peers] = useState(() => new PeerManager(world.socket, world.selfId, media, world.notify));
   const [mediaEls] = useState(() => new Map<string, HTMLMediaElement>());
-  const [area, setArea] = useState<Area | null>(null);
-  const [panel, setPanel] = useState<'chat' | 'people' | 'editor' | null>(null);
+  const [place, setPlace] = useState<Place>({ area: null, spotlight: false });
+  const [mapmaker, setMapmaker] = useState(false);
+  const [panel, setPanel] = useState<'chat' | 'people' | null>(null);
   const [focus, setFocus] = useState<Focus | null>(null);
   const [modal, setModal] = useState<Interaction | null>(null);
   const [emoteOpen, setEmoteOpen] = useState(false);
@@ -49,7 +50,7 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
   useEffect(() => {
     media.onTrack = (kind, track) => peers.replaceTrack(kind, track);
     const engine = new Engine(canvasRef.current!, world, peers, mediaEls);
-    engine.onAreaChange = setArea;
+    engine.onPlaceChange = setPlace;
     engine.onFocusChange = setFocus;
     engine.onInteract = f => interactRef.current(f);
     engine.start();
@@ -79,15 +80,17 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
   }, [toast]);
 
   const unread = panel === 'chat' ? 0 : world.chat.length - seenChat;
-  const togglePanel = (p: 'chat' | 'people' | 'editor') => setPanel(cur => (cur === p ? null : p));
+  const togglePanel = (p: 'chat' | 'people') => setPanel(cur => (cur === p ? null : p));
+  const roomName = world.map.rooms[world.self.room]?.name ?? '';
   const myDesk = world.myDesk;
 
   /** Tecla X (ou clique no aviso): abre o objeto ou ocupa/libera a mesa. */
   function interact(f: Focus) {
     if (f.type === 'interaction') {
-      setModal(f.value);
+      if (f.obj.interaction?.kind === 'link' && f.obj.interaction.url) window.open(f.obj.interaction.url, '_blank', 'noopener');
+      else if (f.obj.interaction) setModal(f.obj.interaction);
     } else if (!f.claim) {
-      world.claimDesk(f.key);
+      world.claimDesk(f.area);
       setToast(myDesk ? 'Você mudou de mesa' : 'Mesa ocupada! Ela agora é sua');
     } else if (f.claim.owner === world.ownerTag) {
       world.releaseDesk();
@@ -103,13 +106,13 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
     if (f.type === 'interaction')
       return (
         <>
-          Aperte <kbd>X</kbd> para abrir <strong>{f.value.title}</strong>
+          Aperte <kbd>X</kbd> para abrir <strong>{f.obj.interaction?.title}</strong>
         </>
       );
     if (!f.claim)
       return (
         <>
-          Mesa livre · aperte <kbd>X</kbd> para ocupar
+          {f.area} livre · aperte <kbd>X</kbd> para ocupar
         </>
       );
     if (f.claim.owner === world.ownerTag)
@@ -139,20 +142,29 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
     <div className="space">
       <div className="stage">
         <canvas ref={canvasRef} className="game" />
-        <VideoStrip world={world} peers={peers} media={media} mediaEls={mediaEls} />
+        {!mapmaker && <VideoStrip world={world} peers={peers} media={media} mediaEls={mediaEls} />}
+        {mapmaker && (
+          <Mapmaker world={world} engine={engineRef.current} onClose={() => setMapmaker(false)} onToast={setToast} />
+        )}
 
-        {focus && !modal && panel !== 'editor' && (
+        {focus && !modal && !mapmaker && (
           <button className="focus-prompt" onClick={() => interact(focus)}>
             {focusLabel(focus)}
           </button>
         )}
         {modal && <InteractionModal interaction={modal} onClose={() => setModal(null)} />}
-        {area && (
-          <div className="area-banner">
-            🔒 <strong>{area.name}</strong> — só quem está aqui dentro te ouve
+        {!mapmaker && place.spotlight && (
+          <div className="area-banner spotlight">
+            📢 Você está no <strong>holofote</strong> — todos em {roomName} te veem e ouvem
           </div>
         )}
-        {showHelp && (
+        {!mapmaker && !place.spotlight && place.area && (
+          <div className="area-banner">
+            🔒 <strong>{place.area}</strong> — só quem está aqui dentro te ouve
+          </div>
+        )}
+        {!mapmaker && <div className="room-pill">{roomName}</div>}
+        {showHelp && !mapmaker && (
           <div className="help" onClick={() => setShowHelp(false)}>
             Ande com <kbd>WASD</kbd>/<kbd>setas</kbd> ou clique no mapa · Chegue perto de alguém para conversar · <kbd>1</kbd>–
             <kbd>5</kbd> emotes · <kbd>X</kbd> interagir · <kbd>Alt</kbd>+<kbd>F</kbd> fumar
@@ -178,9 +190,8 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
         )}
       </div>
 
-      {panel === 'editor' && <MapEditor world={world} engine={engineRef.current} onClose={() => setPanel(null)} />}
-      {panel === 'chat' && <ChatPanel world={world} onClose={() => setPanel(null)} />}
-      {panel === 'people' && (
+      {panel === 'chat' && !mapmaker && <ChatPanel world={world} onClose={() => setPanel(null)} />}
+      {panel === 'people' && !mapmaker && (
         <PeoplePanel
           world={world}
           peers={peers}
@@ -284,14 +295,20 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
               className="icon"
               title="Ir para minha mesa"
               onClick={() => {
-                const { x, y } = parseKey(myDesk);
-                engineRef.current?.goTo(x, y);
+                if (!engineRef.current?.walkToDesk()) setToast(`Sua mesa fica em ${world.map.rooms[myDesk.room]?.name ?? 'outra sala'}`);
               }}
             >
               <Armchair size={18} />
             </button>
           )}
-          <button className={`icon ${panel === 'editor' ? 'active' : ''}`} onClick={() => togglePanel('editor')} title="Editar mapa">
+          <button
+            className={`icon ${mapmaker ? 'active' : ''}`}
+            onClick={() => {
+              setMapmaker(m => !m);
+              setPanel(null);
+            }}
+            title="Mapmaker — editar o espaço"
+          >
             <Hammer size={18} />
           </button>
           <button className={`icon ${panel === 'chat' ? 'active' : ''}`} onClick={() => togglePanel('chat')} title="Chat">

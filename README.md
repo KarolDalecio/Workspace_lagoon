@@ -13,10 +13,17 @@ Plataforma de escritório virtual no estilo Gather: um mapa 2D onde cada pessoa 
 - **Escolha de microfone, câmera e alto-falante** no lobby e durante a conversa (engrenagem na barra), com medidor de nível do microfone
 - **Chat** "Todos" e "Por perto"
 - **Emotes** (teclas 1–5), **Alt+F para fumar** (cigarro com fumaça, visível para todos) e personalização de avatar
-- **Múltiplos espaços** por URL: `?space=nome-do-time`, cada um com seu próprio mapa salvo em `data/spaces/`
-- **Interações com X**: chegue perto de um objeto (TV, quadro branco, mural, estante) e aperte X para abrir vídeo, site embutido, nota ou link. Cada quadro branco é uma sala colaborativa do Excalidraw
-- **Mesas**: sente numa cadeira encostada numa mesa de trabalho e aperte X para ocupar; seu nome aparece numa plaquinha na mesa. Uma mesa por pessoa, botão "Ir para minha mesa" na barra
-- **Editor de mapa** (ícone de martelo): pinte pisos, coloque/remova objetos, crie áreas privadas, mude a entrada e configure interações. As mudanças aparecem na hora para todos e ficam salvas
+- **Múltiplos espaços** por URL: `?space=nome-do-time`, cada um com suas salas salvas em `data/spaces/`
+- **Várias salas por espaço** (Escritório e Auditório no modelo padrão), ligadas por **portais**
+- **Interações com X**: TV, quadro branco (Excalidraw colaborativo), mural, documentos — site, vídeo, imagem, link ou nota
+- **Mesas ocupáveis**: entre numa área de mesa e aperte X; seu nome aparece na mesa. Botão "Ir para minha mesa"
+- **Holofote**: no palco do Auditório, você é ouvido pela sala toda
+- **Mapmaker** (martelo), no estilo do Gather — veja [docs/referencia-gather.md](docs/referencia-gather.md):
+  - Objetos: catálogo com busca, categorias, cores e rotação; selecionar, carimbar, apagar, mover
+  - Efeitos de tile em camadas: Bloqueio, Entrada, Portal, Área privada (com "área de mesa") e Holofote
+  - Piso com pincel e preenchimento retangular; fundo e primeiro plano por upload de imagem
+  - Seleção retangular para copiar, mover e apagar grupos; desfazer/refazer; criar, renomear e apagar salas
+  - Tudo sincronizado em tempo real para quem está no espaço
 
 ## Rodando localmente
 

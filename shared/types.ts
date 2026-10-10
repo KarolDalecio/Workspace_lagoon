@@ -1,4 +1,4 @@
-import type { DeskClaim, GameMap, MapEdit } from './map';
+import type { DeskClaim, MapEdit, SpaceMap } from './map';
 
 export type Dir = 'up' | 'down' | 'left' | 'right';
 
@@ -17,6 +17,8 @@ export interface PlayerState {
   id: string;
   name: string;
   avatar: Avatar;
+  /** Sala (andar) em que a pessoa está. */
+  room: string;
   x: number;
   y: number;
   dir: Dir;
@@ -65,7 +67,7 @@ export interface JoinResponse {
   space: string;
   players: PlayerState[];
   chat: ChatMessage[];
-  map: GameMap;
+  map: SpaceMap;
   /** Hash público do clientKey; comparado com DeskClaim.owner para achar a própria mesa. */
   ownerTag: string;
 }
@@ -73,13 +75,13 @@ export interface JoinResponse {
 export interface ServerToClient {
   'player:joined': (p: PlayerState) => void;
   'player:left': (id: string) => void;
-  'player:moved': (m: { id: string; x: number; y: number; dir: Dir }) => void;
+  'player:moved': (m: { id: string; room: string; x: number; y: number; dir: Dir }) => void;
   'player:updated': (p: Partial<PlayerState> & { id: string }) => void;
   'chat:message': (m: ChatMessage) => void;
   emote: (e: { id: string; emoji: string }) => void;
   'rtc:signal': (s: { from: string; data: SignalData }) => void;
   'map:edited': (edit: MapEdit) => void;
-  'map:replaced': (map: GameMap) => void;
+  'map:replaced': (map: SpaceMap) => void;
   'map:claims': (claims: Record<string, DeskClaim>) => void;
 }
 

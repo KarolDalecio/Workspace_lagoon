@@ -9,6 +9,7 @@ import { canHear } from '../shared/proximity';
 import {
   AVATAR_OPTIONS,
   EMOTES,
+  PLAYER_ACTIONS,
   type Avatar,
   type ChatMessage,
   type ClientToServer,
@@ -100,6 +101,7 @@ io.on('connection', socket => {
       dir: 'down',
       audio: !!req?.audio,
       video: !!req?.video,
+      action: null,
     };
     space.players.set(socket.id, player);
     socket.join(spaceId);
@@ -157,6 +159,13 @@ io.on('connection', socket => {
     p.audio = !!m?.audio;
     p.video = !!m?.video;
     socket.to(spaceId).emit('player:updated', { id: p.id, audio: p.audio, video: p.video });
+  });
+
+  socket.on('action', a => {
+    const p = me();
+    if (!p || !spaceId) return;
+    p.action = a && PLAYER_ACTIONS.includes(a) ? a : null;
+    socket.to(spaceId).emit('player:updated', { id: p.id, action: p.action });
   });
 
   socket.on('rtc:signal', s => {

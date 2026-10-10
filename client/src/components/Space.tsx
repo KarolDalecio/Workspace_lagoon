@@ -97,7 +97,7 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
         {showHelp && (
           <div className="help" onClick={() => setShowHelp(false)}>
             Ande com <kbd>WASD</kbd>/<kbd>setas</kbd> ou clique no mapa · Chegue perto de alguém para conversar · <kbd>1</kbd>–
-            <kbd>5</kbd> emotes
+            <kbd>5</kbd> emotes · <kbd>Alt</kbd>+<kbd>F</kbd> fumar
           </div>
         )}
         {media.screenOn && (
@@ -198,6 +198,16 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
                     {e}
                   </button>
                 ))}
+                <button
+                  className={world.self.action === 'smoke' ? 'active' : ''}
+                  onClick={() => {
+                    world.toggleAction('smoke');
+                    setEmoteOpen(false);
+                  }}
+                  title={world.self.action === 'smoke' ? 'Apagar o cigarro (Alt+F)' : 'Fumar (Alt+F)'}
+                >
+                  🚬
+                </button>
               </div>
             )}
           </div>

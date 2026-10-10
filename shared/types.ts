@@ -1,5 +1,9 @@
 export type Dir = 'up' | 'down' | 'left' | 'right';
 
+/** Ação contínua do avatar, visível para todos (ex.: fumando). */
+export type PlayerAction = 'smoke';
+export const PLAYER_ACTIONS: PlayerAction[] = ['smoke'];
+
 export interface Avatar {
   skin: string;
   hair: string;
@@ -16,6 +20,7 @@ export interface PlayerState {
   dir: Dir;
   audio: boolean;
   video: boolean;
+  action: PlayerAction | null;
 }
 
 export type ChatScope = 'everyone' | 'nearby';
@@ -74,6 +79,7 @@ export interface ClientToServer {
   chat: (m: { text: string; scope: ChatScope }) => void;
   emote: (emoji: string) => void;
   media: (m: { audio: boolean; video: boolean }) => void;
+  action: (a: PlayerAction | null) => void;
   'rtc:signal': (s: { to: string; data: SignalData }) => void;
 }
 

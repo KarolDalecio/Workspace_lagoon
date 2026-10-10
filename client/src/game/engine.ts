@@ -3,7 +3,7 @@ import { PROX_RADIUS, canHear, volumeFor } from '../../../shared/proximity';
 import { EMOTES, type Dir } from '../../../shared/types';
 import type { PeerManager } from '../rtc/peers';
 import type { World } from '../world';
-import { drawAvatar, drawEmote, drawNameTag } from './avatar';
+import { drawAvatar, drawEmote, drawNameTag, drawSmoke, smokeClock } from './avatar';
 import { renderStaticMap } from './mapRenderer';
 import { findPath, type Point } from './path';
 
@@ -83,6 +83,12 @@ export class Engine {
   private onKeyDown = (e: KeyboardEvent) => {
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    // Alt+F: acende/apaga o cigarro. preventDefault evita o menu do navegador.
+    if (e.altKey && e.code === 'KeyF' && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      if (!e.repeat) this.world.toggleAction('smoke');
+      return;
+    }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const dir = KEY_DIR[e.key];
     if (dir) {
@@ -271,8 +277,9 @@ export class Engine {
         ctx.stroke();
       }
       const moving = Math.abs(p.x - p.rx) + Math.abs(p.y - p.ry) > 0.01;
-      drawAvatar(ctx, px, py, p.avatar, p.dir, p.walk / STEP_MS, moving);
+      drawAvatar(ctx, px, py, p.avatar, p.dir, p.walk / STEP_MS, moving, p.action === 'smoke' ? smokeClock(now, p.id) : undefined);
     }
+    for (const p of players) if (p.action === 'smoke') drawSmoke(ctx, p.rx * TILE, p.ry * TILE, p.dir, smokeClock(now, p.id));
     for (const p of players) drawNameTag(ctx, p.rx * TILE + 16, p.ry * TILE + 31, p.name, p.id === me.id, p.audio);
     for (const [id, e] of this.world.emotes) {
       const p = this.world.players.get(id);

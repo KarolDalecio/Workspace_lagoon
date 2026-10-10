@@ -12,7 +12,7 @@ Plataforma de escritório virtual no estilo Gather: um mapa 2D onde cada pessoa 
 - **Compartilhamento de tela com áudio** (som da aba ou do sistema, mixado com o microfone), mutar microfone/câmera, vídeo em destaque (clique no tile)
 - **Escolha de microfone, câmera e alto-falante** no lobby e durante a conversa (engrenagem na barra), com medidor de nível do microfone
 - **Chat** "Todos" e "Por perto"
-- **Emotes** (teclas 1–5) e personalização de avatar
+- **Emotes** (teclas 1–5), **Alt+F para fumar** (cigarro com fumaça, visível para todos) e personalização de avatar
 - **Múltiplos espaços** por URL: `?space=nome-do-time`
 
 ## Rodando localmente

@@ -5,6 +5,7 @@ import type {
   ClientToServer,
   JoinRequest,
   JoinResponse,
+  PlayerAction,
   PlayerState,
   ServerToClient,
 } from '../../shared/types';
@@ -104,6 +105,14 @@ export class World {
   sendEmote(emoji: string) {
     this.emotes.set(this.selfId, { emoji, until: performance.now() + 3000 });
     this.socket.emit('emote', emoji);
+  }
+
+  /** Liga/desliga uma ação contínua do avatar (ex.: Alt+F para fumar). */
+  toggleAction(action: PlayerAction) {
+    const me = this.self;
+    me.action = me.action === action ? null : action;
+    this.socket.emit('action', me.action);
+    this.notify();
   }
 
   setMedia(audio: boolean, video: boolean) {

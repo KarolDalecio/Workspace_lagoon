@@ -768,3 +768,7 @@ kbd {
   padding: 8px 16px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
+
+.emote-menu button.active {
+  background: rgba(255, 106, 43, 0.25);
+}

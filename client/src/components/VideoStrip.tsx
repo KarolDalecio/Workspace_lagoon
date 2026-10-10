@@ -1,5 +1,5 @@
 import { MicOff } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Avatar } from '../../../shared/types';
 import type { LocalMedia } from '../rtc/media';
 import type { PeerManager } from '../rtc/peers';
@@ -16,16 +16,42 @@ interface TileProps {
   self?: boolean;
   mirror?: boolean;
   mediaEls?: Map<string, HTMLMediaElement>;
+  sinkId?: string | null;
+  onAutoplayBlocked?: () => void;
   onExpand?: () => void;
 }
 
-function VideoTile({ id, name, avatar, stream, videoOn, audioOn, self, mirror, mediaEls, onExpand }: TileProps) {
+function VideoTile({
+  id,
+  name,
+  avatar,
+  stream,
+  videoOn,
+  audioOn,
+  self,
+  mirror,
+  mediaEls,
+  sinkId,
+  onAutoplayBlocked,
+  onExpand,
+}: TileProps) {
   const ref = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     const el = ref.current;
-    if (el && el.srcObject !== stream) el.srcObject = stream;
-  }, [stream]);
+    if (el && !self && sinkId && 'setSinkId' in el) void el.setSinkId(sinkId).catch(() => {});
+  }, [sinkId, self]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || el.srcObject === stream) return;
+    el.srcObject = stream;
+    // Sem interação prévia do usuário o navegador pode bloquear áudio com autoplay.
+    if (stream && !self)
+      el.play().catch((err: DOMException) => {
+        if (err.name === 'NotAllowedError') onAutoplayBlocked?.();
+      });
+  }, [stream, self, onAutoplayBlocked]);
 
   useEffect(() => {
     const el = ref.current;
@@ -64,6 +90,16 @@ export function VideoStrip({
   mediaEls: Map<string, HTMLMediaElement>;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  const onAutoplayBlocked = useCallback(() => setAudioBlocked(true), []);
+
+  function unlockAudio() {
+    setAudioBlocked(false);
+    for (const el of mediaEls.values())
+      el.play().catch((err: DOMException) => {
+        if (err.name === 'NotAllowedError') setAudioBlocked(true);
+      });
+  }
   const me = world.self;
   const others = peers.ids().map(id => world.players.get(id)).filter(p => !!p);
   const expandedStream = expanded === me.id ? media.stream : expanded ? peers.stream(expanded) : null;
@@ -101,10 +137,17 @@ export function VideoStrip({
             videoOn={p.video}
             audioOn={p.audio}
             mediaEls={mediaEls}
+            sinkId={media.selected.output}
+            onAutoplayBlocked={onAutoplayBlocked}
             onExpand={() => setExpanded(p.id)}
           />
         ))}
       </div>
+      {audioBlocked && (
+        <button className="unlock-audio" onClick={unlockAudio}>
+          🔇 Clique para ativar o áudio
+        </button>
+      )}
       {expanded && expandedStream && (
         <div className="spotlight" onClick={() => setExpanded(null)}>
           <video ref={expandedRef} autoPlay playsInline muted />

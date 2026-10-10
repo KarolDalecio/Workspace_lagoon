@@ -4,6 +4,7 @@ import { AVATAR_OPTIONS, type Avatar } from '../../../shared/types';
 import { LocalMedia } from '../rtc/media';
 import { joinSpace, type World } from '../world';
 import { AvatarPreview } from './AvatarPreview';
+import { DeviceSettings } from './DeviceSettings';
 
 const STORAGE_KEY = 'praca:profile';
 
@@ -127,6 +128,7 @@ export function Lobby({ onJoined }: { onJoined: (world: World, media: LocalMedia
               </button>
             </div>
             {media.error && <p className="hint warn">{media.error}</p>}
+            <DeviceSettings media={media} />
           </div>
 
           <div className="lobby-form">

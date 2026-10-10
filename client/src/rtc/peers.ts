@@ -90,7 +90,7 @@ export class PeerManager {
   private async call(id: string) {
     const { pc } = this.create(id);
     for (const kind of ['audio', 'video'] as const)
-      pc.addTransceiver(this.media.track(kind) ?? kind, { direction: 'sendrecv' });
+      pc.addTransceiver(this.media.sendTrack(kind) ?? kind, { direction: 'sendrecv' });
     try {
       await pc.setLocalDescription();
       this.send(id, { sdp: pc.localDescription!.toJSON() as SessionDescription });
@@ -131,7 +131,7 @@ export class PeerManager {
     const { pc } = peer;
     await pc.setRemoteDescription(sdp);
     for (const tr of pc.getTransceivers()) {
-      await tr.sender.replaceTrack(this.media.track(tr.receiver.track.kind as Kind));
+      await tr.sender.replaceTrack(this.media.sendTrack(tr.receiver.track.kind as Kind));
       tr.direction = 'sendrecv';
     }
     await pc.setLocalDescription();

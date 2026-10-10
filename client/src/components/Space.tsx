@@ -5,6 +5,7 @@ import {
   Mic,
   MicOff,
   MonitorUp,
+  Settings,
   Smile,
   Users,
   Video,
@@ -19,6 +20,7 @@ import { Engine } from '../game/engine';
 import type { LocalMedia } from '../rtc/media';
 import { PeerManager } from '../rtc/peers';
 import type { World } from '../world';
+import { DeviceSettings } from './DeviceSettings';
 import { ChatPanel, PeoplePanel } from './Panels';
 import { VideoStrip } from './VideoStrip';
 
@@ -33,6 +35,7 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
   const [area, setArea] = useState<Area | null>(null);
   const [panel, setPanel] = useState<'chat' | 'people' | null>(null);
   const [emoteOpen, setEmoteOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [seenChat, setSeenChat] = useState(world.chat.length);
   const [toast, setToast] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(true);
@@ -43,7 +46,7 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
     engine.onAreaChange = setArea;
     engine.start();
     engineRef.current = engine;
-    if (import.meta.env.DEV) Object.assign(window, { praca: { world, engine, peers } });
+    if (import.meta.env.DEV) Object.assign(window, { praca: { world, engine, peers, media } });
     const help = setTimeout(() => setShowHelp(false), 10000);
     return () => {
       clearTimeout(help);
@@ -95,6 +98,11 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
           <div className="help" onClick={() => setShowHelp(false)}>
             Ande com <kbd>WASD</kbd>/<kbd>setas</kbd> ou clique no mapa · Chegue perto de alguém para conversar · <kbd>1</kbd>–
             <kbd>5</kbd> emotes
+          </div>
+        )}
+        {media.screenOn && (
+          <div className="screen-pill">
+            🖥️ Compartilhando tela{media.screenAudioOn ? ' com áudio' : ' (sem áudio)'}
           </div>
         )}
         {toast && <div className="toast">{toast}</div>}
@@ -150,10 +158,28 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
           <button
             className={`round ${media.screenOn ? 'active' : ''}`}
             onClick={() => media.toggleScreen()}
-            title={media.screenOn ? 'Parar compartilhamento' : 'Compartilhar tela'}
+            title={
+              media.screenOn
+                ? `Parar compartilhamento${media.screenAudioOn ? ' (com áudio)' : ''}`
+                : 'Compartilhar tela (marque "Compartilhar áudio" para enviar o som)'
+            }
           >
             <MonitorUp size={18} />
           </button>
+          <div className="emote-wrap">
+            <button
+              className={`round ${settingsOpen ? 'active' : ''}`}
+              onClick={() => setSettingsOpen(o => !o)}
+              title="Configurações de áudio e vídeo"
+            >
+              <Settings size={18} />
+            </button>
+            {settingsOpen && (
+              <div className="settings-menu">
+                <DeviceSettings media={media} />
+              </div>
+            )}
+          </div>
           <div className="emote-wrap">
             <button className="round" onClick={() => setEmoteOpen(o => !o)} title="Emotes">
               <Smile size={18} />

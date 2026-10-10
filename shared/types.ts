@@ -1,0 +1,87 @@
+export type Dir = 'up' | 'down' | 'left' | 'right';
+
+export interface Avatar {
+  skin: string;
+  hair: string;
+  shirt: string;
+  hairStyle: number;
+}
+
+export interface PlayerState {
+  id: string;
+  name: string;
+  avatar: Avatar;
+  x: number;
+  y: number;
+  dir: Dir;
+  audio: boolean;
+  video: boolean;
+}
+
+export type ChatScope = 'everyone' | 'nearby';
+
+export interface ChatMessage {
+  id: string;
+  from: string;
+  name: string;
+  text: string;
+  ts: number;
+  scope: ChatScope;
+}
+
+export interface SessionDescription {
+  type: 'offer' | 'answer';
+  sdp: string;
+}
+
+export interface IceCandidate {
+  candidate: string;
+  sdpMid?: string | null;
+  sdpMLineIndex?: number | null;
+  usernameFragment?: string | null;
+}
+
+export type SignalData = { sdp: SessionDescription } | { candidate: IceCandidate } | { hangup: true };
+
+export interface JoinRequest {
+  space: string;
+  name: string;
+  avatar: Avatar;
+  audio: boolean;
+  video: boolean;
+}
+
+export interface JoinResponse {
+  selfId: string;
+  space: string;
+  players: PlayerState[];
+  chat: ChatMessage[];
+}
+
+export interface ServerToClient {
+  'player:joined': (p: PlayerState) => void;
+  'player:left': (id: string) => void;
+  'player:moved': (m: { id: string; x: number; y: number; dir: Dir }) => void;
+  'player:updated': (p: Partial<PlayerState> & { id: string }) => void;
+  'chat:message': (m: ChatMessage) => void;
+  emote: (e: { id: string; emoji: string }) => void;
+  'rtc:signal': (s: { from: string; data: SignalData }) => void;
+}
+
+export interface ClientToServer {
+  join: (req: JoinRequest, ack: (res: JoinResponse) => void) => void;
+  move: (m: { x: number; y: number; dir: Dir }) => void;
+  chat: (m: { text: string; scope: ChatScope }) => void;
+  emote: (emoji: string) => void;
+  media: (m: { audio: boolean; video: boolean }) => void;
+  'rtc:signal': (s: { to: string; data: SignalData }) => void;
+}
+
+export const AVATAR_OPTIONS = {
+  skin: ['#f6d3b3', '#e8b48a', '#c68642', '#8d5524', '#5c3a21'],
+  hair: ['#2b1d14', '#5a3825', '#c58b3c', '#e8d18a', '#9b9b9b', '#d9534f', '#6f42c1'],
+  shirt: ['#5b6ee1', '#e15b64', '#2fb380', '#f0a73a', '#8c5bd6', '#3fb6d6', '#4a4a4a', '#f2f2f2'],
+  hairStyles: 4,
+};
+
+export const EMOTES = ['👋', '❤️', '😂', '👍', '🎉'];

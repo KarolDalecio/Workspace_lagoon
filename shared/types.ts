@@ -19,6 +19,8 @@ export interface PlayerState {
   avatar: Avatar;
   /** Sala (andar) em que a pessoa está. */
   room: string;
+  /** Identificador público do navegador (hash), usado em mesas e salas trancadas. */
+  tag: string;
   x: number;
   y: number;
   dir: Dir;
@@ -83,6 +85,8 @@ export interface ServerToClient {
   'map:edited': (edit: MapEdit) => void;
   'map:replaced': (map: SpaceMap) => void;
   'map:claims': (claims: Record<string, DeskClaim>) => void;
+  /** Aviso curto para mostrar à pessoa (ex.: sala trancada, edição negada). */
+  notice: (text: string) => void;
 }
 
 export interface ClientToServer {

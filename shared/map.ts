@@ -45,9 +45,28 @@ export interface PortalTarget {
   y: number;
 }
 
+/**
+ * Pessoa com acesso a uma área trancada. `tag` é o hash público do navegador;
+ * enquanto for null, a vaga está reservada pelo nome e se prende ao primeiro
+ * navegador com esse nome que entrar.
+ */
+export interface AllowedPerson {
+  name: string;
+  tag: string | null;
+}
+
 export interface AreaMeta {
   /** Área de mesa: pode ser ocupada por uma pessoa. */
   desk: boolean;
+  /** Área trancada: só quem está em `allowed` entra (e edita o que tem dentro). */
+  locked?: boolean;
+  allowed?: AllowedPerson[];
+}
+
+/** Quem está tentando entrar/editar. */
+export interface Who {
+  tag: string;
+  name: string;
 }
 
 /** Mesa ocupada. `owner` é um identificador público (hash), nunca a chave do navegador. */
@@ -162,6 +181,100 @@ export function interactionNear(room: Room, x: number, y: number) {
   return best;
 }
 
+/** Se a pessoa consta na lista da área (pelo navegador; ou pelo nome, se a vaga ainda não foi presa). */
+export function isAllowed(meta: AreaMeta | undefined, who: Who) {
+  if (!meta?.locked) return true;
+  return !!meta.allowed?.some(a => (a.tag ? a.tag === who.tag : a.name.toLowerCase() === who.name.trim().toLowerCase()));
+}
+
+/** Área trancada em que o tile fica, se a pessoa não tiver acesso a ela. */
+export function lockedAgainst(room: Room, x: number, y: number, who: Who) {
+  const name = areaAt(room, x, y);
+  if (!name) return null;
+  return isAllowed(room.areaMeta[name], who) ? null : name;
+}
+
+export function canEnter(room: Room, x: number, y: number, who: Who) {
+  return isWalkable(room, x, y) && !lockedAgainst(room, x, y, who);
+}
+
+/** Tiles que uma edição toca (para proteger o conteúdo de áreas trancadas). */
+function touchedTiles(map: SpaceMap, op: MapEdit): { room: Room; tiles: { x: number; y: number }[] }[] {
+  if (op.kind === 'batch') return op.ops.flatMap(o => touchedTiles(map, o));
+  if (op.kind === 'room-add' || op.kind === 'room-remove' || op.kind === 'room-update') return [];
+  const room = map.rooms[op.room];
+  if (!room) return [];
+  const rect = (r: Rect) => {
+    const out = [];
+    for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) out.push({ x, y });
+    return out;
+  };
+  switch (op.kind) {
+    case 'floor':
+    case 'flag':
+    case 'private':
+    case 'portal':
+      return [{ room, tiles: Array.isArray(op.tiles) ? op.tiles : [] }];
+    case 'obj-add':
+      return op.obj ? [{ room, tiles: rect(footprint(op.obj)) }] : [];
+    case 'obj-remove':
+    case 'obj-update': {
+      const obj = room.objects.find(o => o.id === op.id);
+      if (!obj) return [];
+      const tiles = rect(footprint(obj));
+      if (op.kind === 'obj-update' && (op.patch?.x !== undefined || op.patch?.y !== undefined))
+        tiles.push(...rect(footprint({ ...obj, x: op.patch.x ?? obj.x, y: op.patch.y ?? obj.y })));
+      return [{ room, tiles }];
+    }
+    case 'area-meta':
+      return [];
+  }
+  return [];
+}
+
+/**
+ * Se a pessoa pode fazer esta edição: ninguém mexe dentro de uma área trancada,
+ * nem nas regras dela, sem estar na lista. Retorna o motivo quando não pode.
+ */
+export function editDenied(map: SpaceMap, op: MapEdit, who: Who): string | null {
+  if (op.kind === 'batch') {
+    for (const o of Array.isArray(op.ops) ? op.ops : []) {
+      const reason = editDenied(map, o, who);
+      if (reason) return reason;
+    }
+    return null;
+  }
+  if (op.kind === 'room-remove') {
+    const room = map.rooms[op.id];
+    if (room && Object.values(room.areaMeta).some(m => !isAllowed(m, who))) return 'Esta sala tem áreas trancadas que você não pode apagar.';
+    return null;
+  }
+  if (op.kind === 'area-meta') {
+    const room = map.rooms[op.room];
+    if (!room) return null;
+    if (!isAllowed(room.areaMeta[op.name], who)) return `Só quem tem acesso a "${op.name}" pode mudar as regras dela.`;
+    if (op.meta?.locked && !isAllowed(cleanMeta(op.meta), who)) return 'Inclua você mesmo na lista antes de trancar.';
+    return null;
+  }
+  if (op.kind === 'portal' && Array.isArray(op.tiles))
+    for (const t of op.tiles) {
+      const target = t?.value ? map.rooms[t.value.room] : null;
+      const name = target && lockedAgainst(target, t.value!.x, t.value!.y, who);
+      if (name) return `O destino fica dentro de "${name}", que está trancada.`;
+    }
+  if (op.kind === 'private' && Array.isArray(op.tiles)) {
+    const room = map.rooms[op.room];
+    for (const t of op.tiles)
+      if (room && typeof t?.value === 'string' && !isAllowed(room.areaMeta[t.value.trim()], who)) return `"${t.value}" está trancada.`;
+  }
+  for (const { room, tiles } of touchedTiles(map, op))
+    for (const t of tiles) {
+      const name = lockedAgainst(room, t.x, t.y, who);
+      if (name) return `"${name}" está trancada — só quem tem acesso pode editar lá dentro.`;
+    }
+  return null;
+}
+
 export function areaBounds(room: Room, name: string) {
   let x0 = Infinity;
   let y0 = Infinity;
@@ -250,9 +363,9 @@ class Builder {
     }
   }
 
-  area(name: string, x: number, y: number, w: number, h: number, desk = false) {
+  area(name: string, x: number, y: number, w: number, h: number, desk = false, allowedNames?: string[]) {
     for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) this.room.privateAreas[tileKey(xx, yy)] = name;
-    this.room.areaMeta[name] = { desk };
+    this.room.areaMeta[name] = allowedNames ? { desk, locked: true, allowed: allowedNames.map(n => ({ name: n, tag: null })) } : { desk };
   }
 
   portal(x: number, y: number, target: PortalTarget) {
@@ -442,66 +555,72 @@ function officeRoom(id: string, name: string, auditorium?: string) {
   b.put('standsign', 20, 27, { label: 'P' });
   b.flag('spawn', 24, 29, 18, 2);
 
-  // ---------------- Salas da direita
-  b.wallV(47, 3, 11, OUTER);
-  b.wallV(54, 3, 10, OUTER);
-  b.floor(48, 4, 6, 7, 'darkwood');
-  b.floor(55, 4, 7, 7, 'darkwood');
-  b.wallH(47, 61, 11, FACE);
-  for (const x of [50, 51, 57, 58]) swap('door', x, 11);
+  // ---------------- Salas da direita (Karol e Guilherme), trancadas para os dois
+  const OWNERS = ['Karol', 'Guilherme'];
+  b.wallV(47, 3, 13, OUTER);
+  b.wallV(54, 3, 12, OUTER);
+  swap('door', 54, 8); // passagem entre as duas salas
+  b.floor(48, 4, 6, 9, 'darkwood');
+  b.floor(55, 4, 7, 9, 'darkwood');
+  b.wallH(47, 61, 13, FACE);
+  for (const x of [50, 51, 57, 58]) swap('door', x, 13);
 
-  // Sala 1
-  b.put('cabinet', 48, 4, { color: 1 });
-  b.put('whiteboard', 50, 4, { interaction: { kind: 'embed', title: 'Quadro — Sala 1', url: '' } });
-  b.put('frame', 52, 4);
-  b.floor(49, 5, 5, 5, 'carpet');
-  b.put('roundtable', 51, 7);
-  b.put('chair', 51, 6, { rot: 0 });
-  b.put('chair', 51, 8, { rot: 2 });
-  b.put('chair', 50, 7, { rot: 3 });
-  b.put('chair', 52, 7, { rot: 1 });
-  b.area('Sala 1', 48, 4, 6, 7);
+  // Sala da Karol (CTO): TV com videogame, setup de 3 monitores, mesa e fliperamas
+  swap('doorsign', 52, 13, { label: 'CTO' });
+  b.floor(48, 6, 5, 5, 'carpet');
+  b.put('tv', 48, 4, { interaction: { kind: 'video', title: 'TV da Karol', url: 'https://www.youtube.com/embed/jfKfPfyJRdk' } });
+  b.put('videogame', 48, 5);
+  b.put('sofa', 48, 7, { rot: 2, color: 4 });
+  b.put('workstation3', 51, 4);
+  b.put('chair', 52, 5, { rot: 2, color: 5 });
+  b.put('table', 50, 10);
+  b.put('arcade', 53, 10);
+  b.put('arcade', 53, 11, { color: 2 });
+  b.put('plant', 48, 12);
+  b.area('Sala da Karol', 48, 4, 6, 9, false, OWNERS);
 
-  // Sala 2
-  b.put('screen', 55, 4, { color: 2 });
-  swap('board', 57, 3, { color: 2 });
-  b.put('roundtable', 60, 4, { color: 1 });
-  b.put('sofa', 57, 5, { rot: 0, color: 2 });
-  b.put('table', 57, 6);
-  b.put('table', 57, 7);
-  for (const y of [6, 7]) {
-    b.put('chair', 56, y, { rot: 3, color: 3 });
-    b.put('chair', 59, y, { rot: 1, color: 3 });
-  }
-  b.put('sofa', 57, 9, { rot: 2, color: 2 });
-  b.area('Sala 2', 55, 4, 7, 7);
-  b.put('cabinet', 61, 12, { color: 1 });
+  // Sala do Guilherme: vitrola, quadros, setup de 5 monitores, Hachi, 3 luminárias e laguinho de pesca
+  for (const x of [56, 58, 60]) swap('frame', x, 3, { color: x === 58 ? 1 : 0 });
+  b.put('turntable', 55, 4);
+  b.put('workstation5', 58, 4);
+  b.put('chair', 59, 5, { rot: 2, color: 0 });
+  b.put('lamp', 61, 4);
+  b.put('lamp', 55, 7, { color: 1 });
+  b.put('lamp', 55, 12);
+  b.put('dog', 57, 9, { label: 'Hachi' });
+  b.floor(59, 10, 3, 3, 'water');
+  b.flag('impassable', 59, 10, 3, 3);
+  b.put('rock', 61, 9, { color: 1 });
+  b.put('fishingrod', 58, 11, { interaction: { kind: 'note', title: 'Laguinho de pesca', text: '🎣 Pescaria do Guilherme. O Hachi sempre fica de olho nos peixes.' } });
+  b.put('flowers', 58, 12);
+  b.area('Sala do Guilherme', 55, 4, 7, 9, false, OWNERS);
+  b.put('cabinet', 61, 14, { color: 1 });
 
   // Sala de reunião grande
-  b.wallV(47, 14, 27, OUTER);
-  b.wallH(48, 61, 14, FACE);
-  b.wallH(48, 61, 26, FACE);
+  b.wallV(47, 16, 28, OUTER);
+  b.wallH(48, 61, 16, FACE);
+  b.wallH(48, 61, 28, FACE);
   for (const x of [54, 55]) {
-    swap('door', x, 14);
-    swap('door', x, 26);
+    swap('door', x, 16);
+    swap('door', x, 28);
   }
-  b.floor(48, 15, 14, 11, 'hex');
-  for (const x of [48, 49, 51, 52, 57, 58, 59, 61]) b.put('console', x, 15, { color: x % 2 });
-  for (const y of [17, 18, 19]) b.put('barrel', 48, y);
-  b.put('barrel', 48, 22, { color: 1 });
-  b.put('cabinet', 49, 25);
-  b.put('console', 61, 17);
-  b.put('lamp', 61, 21, { color: 1 });
-  b.put('conftable', 52, 20, { interaction: { kind: 'embed', title: 'Telão da sala de reunião', url: '' } });
+  b.floor(48, 17, 14, 11, 'hex');
+  for (const x of [48, 49, 51, 52, 57, 58, 59, 61]) b.put('console', x, 17, { color: x % 2 });
+  for (const y of [19, 20, 21]) b.put('barrel', 48, y);
+  b.put('barrel', 48, 24, { color: 1 });
+  b.put('cabinet', 49, 27);
+  b.put('console', 61, 19);
+  b.put('lamp', 61, 23, { color: 1 });
+  b.put('conftable', 52, 22, { interaction: { kind: 'embed', title: 'Telão da sala de reunião', url: '' } });
   for (let x = 52; x <= 56; x++) {
-    b.put('chair', x, 19, { rot: 0, color: 1 });
-    b.put('chair', x, 24, { rot: 2, color: 1 });
+    b.put('chair', x, 21, { rot: 0, color: 1 });
+    b.put('chair', x, 26, { rot: 2, color: 1 });
   }
-  for (let y = 20; y <= 23; y++) {
+  for (let y = 22; y <= 25; y++) {
     b.put('chair', 51, y, { rot: 3, color: 1 });
     b.put('chair', 57, y, { rot: 1, color: 1 });
   }
-  b.area('Sala de Reunião', 48, 15, 14, 11);
+  b.area('Sala de Reunião', 48, 17, 14, 11);
 
   // ---------------- Faixa de baixo
   b.wallH(2, 61, 31, FACE);
@@ -697,12 +816,25 @@ export function cleanRoom(v: unknown): Room | null {
   for (const effect of FLAG_EFFECTS)
     for (const k of Object.keys(r[effect] ?? {})) if (keyOk(k)) room[effect][k] = 1;
   for (const [k, n] of Object.entries(r.privateAreas ?? {})) if (keyOk(k) && isAreaName(n) && n) room.privateAreas[k] = n.trim();
-  for (const name of new Set(Object.values(room.privateAreas))) room.areaMeta[name] = { desk: !!r.areaMeta?.[name]?.desk };
+  for (const name of new Set(Object.values(room.privateAreas))) room.areaMeta[name] = cleanMeta(r.areaMeta?.[name]);
   for (const [k, t] of Object.entries(r.portals ?? {}))
     if (keyOk(k) && t && ID_RE.test(String(t.room)) && Number.isInteger(t.x) && Number.isInteger(t.y)) room.portals[k] = { room: t.room, x: t.x, y: t.y };
   room.background = r.background ? cleanUrl(r.background) || null : null;
   room.foreground = r.foreground ? cleanUrl(r.foreground) || null : null;
   return room;
+}
+
+function cleanMeta(v: unknown): AreaMeta {
+  const m = (v ?? {}) as AreaMeta;
+  const meta: AreaMeta = { desk: !!m.desk };
+  if (m.locked) {
+    meta.locked = true;
+    meta.allowed = (Array.isArray(m.allowed) ? m.allowed : [])
+      .filter(a => a && typeof a.name === 'string' && a.name.trim())
+      .slice(0, 30)
+      .map(a => ({ name: a.name.trim().slice(0, 24), tag: typeof a.tag === 'string' ? a.tag.slice(0, 32) : null }));
+  }
+  return meta;
 }
 
 export function isSpaceMap(v: unknown): v is SpaceMap {
@@ -836,7 +968,7 @@ function applyOne(map: SpaceMap, edit: MapEdit, depth: number): Applied | null {
       const name = cleanStr(edit.name, 40);
       if (!name || !Object.values(room.privateAreas).includes(name)) return null;
       const prev = room.areaMeta[name] ?? null;
-      const meta = edit.meta ? { desk: !!edit.meta.desk } : { desk: false };
+      const meta = cleanMeta(edit.meta);
       room.areaMeta[name] = meta;
       return { op: { kind: 'area-meta', room: roomId, name, meta }, inverse: { kind: 'area-meta', room: roomId, name, meta: prev } };
     }

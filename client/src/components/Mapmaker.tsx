@@ -24,6 +24,7 @@ import {
   FLAG_EFFECTS,
   FLOORS,
   areaNames,
+  isAllowed,
   createRoom,
   footprint,
   objectAt,
@@ -1090,7 +1091,7 @@ export function Mapmaker({ world, engine, onClose, onToast }: { world: World; en
                       <input
                         type="checkbox"
                         checked={room.areaMeta[privateName.trim()].desk}
-                        onChange={e => edit({ kind: 'area-meta', room: room.id, name: privateName.trim(), meta: { desk: e.target.checked } })}
+                        onChange={e => edit({ kind: 'area-meta', room: room.id, name: privateName.trim(), meta: { ...room.areaMeta[privateName.trim()], desk: e.target.checked } })}
                       />{' '}
                       Área de mesa (pode ser ocupada)
                     </label>
@@ -1138,10 +1139,13 @@ export function Mapmaker({ world, engine, onClose, onToast }: { world: World; en
                         <input
                           type="checkbox"
                           checked={!!room.areaMeta[inspectInfo.area]?.desk}
-                          onChange={e => edit({ kind: 'area-meta', room: room.id, name: inspectInfo.area!, meta: { desk: e.target.checked } })}
+                          onChange={e =>
+                            edit({ kind: 'area-meta', room: room.id, name: inspectInfo.area!, meta: { ...room.areaMeta[inspectInfo.area!], desk: e.target.checked } })
+                          }
                         />{' '}
                         Área de mesa
                       </label>
+                      <AreaAccess world={world} room={room} name={inspectInfo.area} />
                       <button
                         className="chip"
                         onClick={() =>
@@ -1319,6 +1323,90 @@ export function Mapmaker({ world, engine, onClose, onToast }: { world: World; en
         />
       )}
     </>
+  );
+}
+
+/** Trancar uma área privada e escolher quem pode entrar (e editar o que tem dentro). */
+function AreaAccess({ world, room, name }: { world: World; room: Room; name: string }) {
+  const meta = room.areaMeta[name] ?? { desk: false };
+  const canEdit = isAllowed(meta, world.who);
+  const [addName, setAddName] = useState('');
+  const allowed = meta.locked ? meta.allowed ?? [] : [];
+  const online = [...world.players.values()].filter(p => !allowed.some(a => a.tag === p.tag));
+
+  function save(next: typeof meta) {
+    world.editMap({ kind: 'area-meta', room: room.id, name, meta: next });
+  }
+
+  return (
+    <div className="access">
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={!!meta.locked}
+          disabled={!canEdit}
+          onChange={e =>
+            save(e.target.checked ? { ...meta, locked: true, allowed: [{ name: world.self.name, tag: world.ownerTag }] } : { desk: meta.desk })
+          }
+        />{' '}
+        Trancar área (só a lista entra)
+      </label>
+      {meta.locked && (
+        <>
+          <ul>
+            {allowed.map((a, i) => (
+              <li key={`${a.name}-${i}`}>
+                <span>
+                  {a.name}
+                  {a.tag === world.ownerTag && <em> (você)</em>}
+                  <small>{a.tag ? 'vinculado ao navegador' : 'reservado pelo nome — vincula na 1ª entrada'}</small>
+                </span>
+                {canEdit && (
+                  <button className="icon" title="Tirar o acesso" onClick={() => save({ ...meta, allowed: allowed.filter((_, j) => j !== i) })}>
+                    <X size={13} />
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          {canEdit ? (
+            <>
+              {online.length > 0 && (
+                <select
+                  value=""
+                  onChange={e => {
+                    const p = world.players.get(e.target.value);
+                    if (p) save({ ...meta, allowed: [...allowed, { name: p.name, tag: p.tag }] });
+                  }}
+                >
+                  <option value="">+ Dar acesso a quem está online…</option>
+                  {online.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <div className="tool-row">
+                <input value={addName} onChange={e => setAddName(e.target.value)} placeholder="Reservar por nome" maxLength={24} />
+                <button
+                  className="chip"
+                  disabled={!addName.trim()}
+                  onClick={() => {
+                    save({ ...meta, allowed: [...allowed, { name: addName.trim(), tag: null }] });
+                    setAddName('');
+                  }}
+                >
+                  Adicionar
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="hint">Só quem está na lista pode mudar o acesso.</p>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

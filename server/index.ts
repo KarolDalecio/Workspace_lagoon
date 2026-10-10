@@ -7,14 +7,19 @@ import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import {
   applyEdit,
+  areaAt,
   claimKey,
   cleanRoom,
   createDefaultMap,
   deskAreaAt,
+  editDenied,
+  isAllowed,
   isSpaceMap,
   isWalkable,
+  lockedAgainst,
   spawnTiles,
   tileKey,
+  type AreaMeta,
   type MapEdit,
   type Room,
   type SpaceMap,
@@ -140,16 +145,30 @@ function ownerTagFor(clientKey: unknown) {
   return createHash('sha256').update(key).digest('base64url').slice(0, 16);
 }
 
-/** Tile livre de Entrada na sala; sem Entrada, qualquer tile caminhável. */
+/** Tile livre de Entrada na sala; sem Entrada, qualquer tile caminhável. Nunca dentro de área trancada. */
 function findSpawn(space: Space, roomId: string) {
   const room = space.map.rooms[roomId];
   const occupied = new Set([...space.players.values()].filter(p => p.room === roomId).map(p => tileKey(p.x, p.y)));
-  const spawns = spawnTiles(room).filter(t => isWalkable(room, t.x, t.y));
+  const open = (x: number, y: number) => isWalkable(room, x, y) && !room.areaMeta[areaAt(room, x, y) ?? '']?.locked;
+  const spawns = spawnTiles(room).filter(t => open(t.x, t.y));
   const free = spawns.filter(t => !occupied.has(tileKey(t.x, t.y)));
   const pool = free.length ? free : spawns;
   if (pool.length) return pool[Math.floor(Math.random() * pool.length)];
-  for (let y = 0; y < room.height; y++) for (let x = 0; x < room.width; x++) if (isWalkable(room, x, y)) return { x, y };
+  for (let y = 0; y < room.height; y++) for (let x = 0; x < room.width; x++) if (open(x, y)) return { x, y };
   return { x: 0, y: 0 };
+}
+
+/** Preserva os quadros do Excalidraw (o desenho fica no link) ao restaurar o mapa. */
+function keepWhiteboards(from: SpaceMap, to: SpaceMap) {
+  for (const room of Object.values(to.rooms)) {
+    const old = from.rooms[room.id];
+    if (!old) continue;
+    for (const o of room.objects) {
+      if (o.type !== 'whiteboard' || o.interaction?.kind !== 'embed') continue;
+      const prev = old.objects.find(p => p.type === 'whiteboard' && p.x === o.x && p.y === o.y && p.interaction?.url);
+      if (prev?.interaction?.url) o.interaction.url = prev.interaction.url;
+    }
+  }
 }
 
 const app = express();
@@ -181,6 +200,40 @@ io.on('connection', socket => {
   let ownerTag = '';
   const current = () => (spaceId ? spaces.get(spaceId) : undefined);
   const me = () => current()?.players.get(socket.id);
+  const who = () => ({ tag: ownerTag, name: me()?.name ?? '' });
+
+  /**
+   * Primeira entrada numa área reservada pelo nome: a vaga passa a ser deste navegador
+   * (depois disso, outra pessoa com o mesmo nome não entra).
+   */
+  function bindReservation(space: Space, p: PlayerState) {
+    const room = space.map.rooms[p.room];
+    const here = room && areaAt(room, p.x, p.y);
+    const pending = (m: AreaMeta | undefined) =>
+      m?.locked ? (m.allowed ?? []).findIndex(a => !a.tag && a.name.toLowerCase() === p.name.trim().toLowerCase()) : -1;
+    if (!here || pending(room.areaMeta[here]) < 0) return;
+    // A reserva pelo nome vale para todas as áreas trancadas do espaço: prende todas a este navegador.
+    for (const r of Object.values(space.map.rooms))
+      for (const [area, m] of Object.entries(r.areaMeta)) {
+        const k = pending(m);
+        if (k < 0) continue;
+        const allowed = m.allowed!.map((a, j) => (j === k ? { ...a, tag: ownerTag } : a));
+        const applied = applyEdit(space.map, { kind: 'area-meta', room: r.id, name: area, meta: { ...m, allowed } });
+        if (applied) io.to(spaceId!).emit('map:edited', applied.op);
+      }
+    scheduleSave(spaceId!, space);
+  }
+
+  /** Tira de áreas trancadas quem perdeu o acesso (ex.: alguém trancou com a pessoa dentro). */
+  function evictLocked(space: Space) {
+    for (const p of space.players.values()) {
+      const room = space.map.rooms[p.room];
+      if (room && lockedAgainst(room, p.x, p.y, { tag: p.tag, name: p.name })) {
+        relocate(space, p, p.room);
+        io.to(p.id).emit('notice', 'Esta área foi trancada — você foi levado para a entrada.');
+      }
+    }
+  }
 
   /** Leva alguém para outra sala (portal, ou sala apagada) e avisa todos. */
   function relocate(space: Space, p: PlayerState, roomId: string, x?: number, y?: number) {
@@ -203,6 +256,7 @@ io.on('connection', socket => {
       name: cleanText(req?.name, 24) || 'Convidado',
       avatar: cleanAvatar(req?.avatar),
       room,
+      tag: ownerTag,
       x: pos.x,
       y: pos.y,
       dir: 'down',
@@ -228,16 +282,30 @@ io.on('connection', socket => {
       socket.emit('player:moved', { id: p.id, room: p.room, x: p.x, y: p.y, dir: p.dir });
       return;
     }
+    const locked = dist === 1 ? lockedAgainst(room, x, y, who()) : null;
+    if (locked) {
+      socket.emit('player:moved', { id: p.id, room: p.room, x: p.x, y: p.y, dir: p.dir });
+      socket.emit('notice', `🔒 "${locked}" está trancada.`);
+      return;
+    }
     p.dir = dir;
     // Portal: só dispara ao pisar nele (chegar num portal pelo outro lado não te manda de volta).
     const portal = dist === 1 ? room.portals[tileKey(x, y)] : undefined;
     if (portal && space.map.rooms[portal.room]) {
+      const lockedDest = lockedAgainst(space.map.rooms[portal.room], portal.x, portal.y, who());
+      if (lockedDest) {
+        socket.emit('player:moved', { id: p.id, room: p.room, x: p.x, y: p.y, dir: p.dir });
+        socket.emit('notice', `🔒 O portal leva para "${lockedDest}", que está trancada.`);
+        return;
+      }
       relocate(space, p, portal.room, portal.x, portal.y);
+      bindReservation(space, p);
       return;
     }
     p.x = x;
     p.y = y;
     socket.to(spaceId).emit('player:moved', { id: p.id, room: p.room, x, y, dir });
+    bindReservation(space, p);
   });
 
   socket.on('chat', m => {
@@ -286,6 +354,12 @@ io.on('connection', socket => {
   socket.on('map:edit', (edit: MapEdit) => {
     const space = current();
     if (!space || !spaceId || !me()) return;
+    const denied = editDenied(space.map, edit, who());
+    if (denied) {
+      socket.emit('notice', `🔒 ${denied}`);
+      socket.emit('map:replaced', space.map);
+      return;
+    }
     const claimsBefore = JSON.stringify(space.map.claims);
     const applied = applyEdit(space.map, edit);
     if (!applied) {
@@ -296,13 +370,21 @@ io.on('connection', socket => {
     if (JSON.stringify(space.map.claims) !== claimsBefore) io.to(spaceId).emit('map:claims', space.map.claims);
     // Quem estava numa sala apagada volta para a entrada.
     for (const p of space.players.values()) if (!space.map.rooms[p.room]) relocate(space, p, space.map.entry);
+    evictLocked(space);
     scheduleSave(spaceId, space);
   });
 
   socket.on('map:reset', () => {
     const space = current();
     if (!space || !spaceId || !me()) return;
-    space.map = newSpaceMap();
+    const blocked = Object.values(space.map.rooms).some(r => Object.values(r.areaMeta).some(m => !isAllowed(m, who())));
+    if (blocked) {
+      socket.emit('notice', '🔒 Só quem tem acesso a todas as áreas trancadas pode restaurar o mapa.');
+      return;
+    }
+    const next = newSpaceMap();
+    keepWhiteboards(space.map, next);
+    space.map = next;
     io.to(spaceId).emit('map:replaced', space.map);
     for (const p of space.players.values()) relocate(space, p, space.map.entry);
     scheduleSave(spaceId, space);

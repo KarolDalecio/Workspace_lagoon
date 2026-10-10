@@ -9,6 +9,7 @@ import {
   footprint,
   interactionNear,
   isWalkable,
+  lockedAgainst,
   onSpotlight,
   parseKey,
   tileKey,
@@ -85,6 +86,8 @@ export class Engine {
   onPlaceChange?: (p: Place) => void;
   onFocusChange?: (f: Focus | null) => void;
   onInteract?: (f: Focus) => void;
+  /** Tentou entrar numa área trancada. */
+  onLocked?: (area: string) => void;
 
   /** Mapmaker ligado: câmera livre, cliques vão para o editor. */
   mm: MapmakerView | null = null;
@@ -113,6 +116,7 @@ export class Engine {
   private staticMap = document.createElement('canvas');
   private staticKey = '';
   private imageVersion = 0;
+  private lastLockedNotice = 0;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -185,7 +189,12 @@ export class Engine {
     const me = this.world.self;
     const room = this.world.map.rooms[me.room];
     if (!room) return;
-    this.path = findPath(room, me.x, me.y, x, y, adjacent);
+    const who = this.world.who;
+    this.path = findPath(room, me.x, me.y, x, y, adjacent, (tx, ty) => !lockedAgainst(room, tx, ty, who));
+    if (!this.path.length) {
+      const locked = lockedAgainst(room, x, y, who);
+      if (locked) this.notifyLocked(locked);
+    }
     this.target = this.path.at(-1) ?? null;
   }
 
@@ -204,6 +213,13 @@ export class Engine {
     tiles.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
     this.goTo(tiles[0].x, tiles[0].y);
     return true;
+  }
+
+  private notifyLocked(area: string) {
+    const now = performance.now();
+    if (now - this.lastLockedNotice < 2000) return;
+    this.lastLockedNotice = now;
+    this.onLocked?.(area);
   }
 
   private tileAt(e: MouseEvent): Point {
@@ -356,7 +372,12 @@ export class Engine {
     this.lastStep = now;
     const prevDir = me.dir;
     let moved = false;
-    if (isWalkable(room, next.x, next.y)) {
+    const locked = lockedAgainst(room, next.x, next.y, this.world.who);
+    if (locked) {
+      // Porta trancada: vira para ela, mas não entra.
+      this.path = [];
+      this.notifyLocked(locked);
+    } else if (isWalkable(room, next.x, next.y)) {
       me.x = next.x;
       me.y = next.y;
       moved = true;
@@ -524,6 +545,12 @@ export class Engine {
     }
 
     if (!this.mm) {
+      for (const name of areaNames(room)) {
+        const meta = room.areaMeta[name];
+        if (!meta?.locked) continue;
+        const b = areaBounds(room, name);
+        if (b) this.label(`🔒 ${name}`, (b.x + b.w / 2) * TILE, b.y * TILE + 3, 'rgba(120,30,60,0.88)', 6);
+      }
       if (this.place.area) {
         const b = areaBounds(room, this.place.area);
         if (b) {
@@ -635,7 +662,8 @@ export class Engine {
       fillTiles(Object.keys(room.privateAreas), `rgba(236,72,200,${alpha('private')})`);
       for (const name of areaNames(room)) {
         const b = areaBounds(room, name);
-        if (b) this.label(`${room.areaMeta[name]?.desk ? '🪑 ' : '🔒 '}${name}`, (b.x + b.w / 2) * TILE, b.y * TILE + 2, 'rgba(150,30,120,0.9)', 6);
+        const meta = room.areaMeta[name];
+        if (b) this.label(`${meta?.locked ? '🔐 ' : meta?.desk ? '🪑 ' : '🔒 '}${name}`, (b.x + b.w / 2) * TILE, b.y * TILE + 2, 'rgba(150,30,120,0.9)', 6);
       }
     }
     if (show.has('impassable')) fillTiles(Object.keys(room.impassable), `rgba(229,57,53,${alpha('impassable')})`);

@@ -1,5 +1,5 @@
 import { io, type Socket } from 'socket.io-client';
-import { applyEdit, type MapEdit, type SpaceMap } from '../../shared/map';
+import { applyEdit, editDenied, type MapEdit, type SpaceMap, type Who } from '../../shared/map';
 import type {
   ChatMessage,
   ChatScope,
@@ -35,6 +35,8 @@ export class World {
   ownerTag: string;
   /** Incrementa a cada mudança no mapa, para o motor redesenhar o cenário. */
   mapVersion = 0;
+  /** Avisos do servidor (sala trancada, edição negada…). */
+  onNotice?: (text: string) => void;
   /** Edições inversas para desfazer/refazer (só as feitas por esta pessoa). */
   private undoStack: MapEdit[] = [];
   private redoStack: MapEdit[] = [];
@@ -64,6 +66,7 @@ export class World {
       this.redoStack = [];
       this.mapChanged();
     });
+    socket.on('notice', text => this.onNotice?.(text));
     socket.on('map:claims', claims => {
       this.map.claims = claims;
       this.mapChanged();
@@ -115,6 +118,11 @@ export class World {
     return this.players.get(this.selfId)!;
   }
 
+  /** Esta pessoa, para checar acesso a áreas trancadas. */
+  get who(): Who {
+    return { tag: this.ownerTag, name: this.self.name };
+  }
+
   private add(p: PlayerState) {
     this.players.set(p.id, { ...p, rx: p.x, ry: p.y, walk: 0 });
   }
@@ -143,6 +151,11 @@ export class World {
    * `record` diz em qual pilha guardar o inverso: nova edição limpa o refazer.
    */
   editMap(edit: MapEdit, record: 'new' | 'undo' | 'redo' = 'new') {
+    const denied = editDenied(this.map, edit, this.who);
+    if (denied) {
+      this.onNotice?.(`🔒 ${denied}`);
+      return false;
+    }
     const applied = applyEdit(this.map, edit);
     if (!applied) return false;
     this.socket.emit('map:edit', applied.op);

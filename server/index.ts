@@ -1,6 +1,5 @@
 import express from 'express';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +24,7 @@ import {
   type SpaceMap,
 } from '../shared/map';
 import { canHear } from '../shared/proximity';
+import { createStore } from './store';
 import {
   AVATAR_OPTIONS,
   EMOTES,
@@ -42,8 +42,6 @@ const PORT = process.argv.includes('--dev') ? 3001 : Number(process.env.PORT ?? 
 const CHAT_HISTORY = 100;
 const DIRS = new Set<Dir>(['up', 'down', 'left', 'right']);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DATA_DIR = path.join(ROOT, 'data', 'spaces');
-const UPLOAD_DIR = path.join(ROOT, 'data', 'uploads');
 const IMAGE_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
 
 interface Space {
@@ -54,8 +52,9 @@ interface Space {
 }
 
 const spaces = new Map<string, Space>();
-mkdirSync(DATA_DIR, { recursive: true });
-mkdirSync(UPLOAD_DIR, { recursive: true });
+/** Carregamentos em andamento, para dois joins simultâneos não lerem o banco duas vezes. */
+const loading = new Map<string, Promise<Space>>();
+const store = createStore(ROOT);
 
 /** Cada quadro branco sem endereço ganha uma sala própria do Excalidraw (colaborativa). */
 function excalidrawRoom() {
@@ -74,13 +73,9 @@ function newSpaceMap() {
   return map;
 }
 
-function mapFile(id: string) {
-  return path.join(DATA_DIR, `${id}.json`);
-}
-
-function loadMap(id: string): SpaceMap {
+/** Sanitiza um mapa salvo; se não der para aproveitar, começa do mapa padrão. */
+function restoreMap(data: unknown): SpaceMap {
   try {
-    const data = JSON.parse(readFileSync(mapFile(id), 'utf8'));
     if (isSpaceMap(data)) {
       const rooms: SpaceMap['rooms'] = {};
       for (const rid of data.order) {
@@ -90,7 +85,7 @@ function loadMap(id: string): SpaceMap {
       if (rooms[data.entry]) return { rooms, order: data.order.filter(r => rooms[r]), entry: data.entry, claims: data.claims ?? {} };
     }
   } catch {
-    // espaço novo (ou arquivo no formato antigo)
+    // formato inválido
   }
   return newSpaceMap();
 }
@@ -99,21 +94,26 @@ function scheduleSave(id: string, space: Space) {
   clearTimeout(space.saveTimer);
   space.saveTimer = setTimeout(() => {
     space.saveTimer = undefined;
-    try {
-      writeFileSync(mapFile(id), JSON.stringify(space.map));
-    } catch (err) {
-      console.error('Falha ao salvar mapa', id, err);
-    }
+    store.saveSpace(id, space.map, space.chat).catch(err => console.error('Falha ao salvar espaço', id, err));
   }, 1000);
 }
 
-function getSpace(id: string) {
-  let s = spaces.get(id);
-  if (!s) {
-    s = { players: new Map(), chat: [], map: loadMap(id) };
-    spaces.set(id, s);
+async function getSpace(id: string): Promise<Space> {
+  const loaded = spaces.get(id);
+  if (loaded) return loaded;
+  let pending = loading.get(id);
+  if (!pending) {
+    pending = store
+      .loadSpace(id)
+      .then(saved => {
+        const space: Space = { players: new Map(), chat: saved?.chat.slice(-CHAT_HISTORY) ?? [], map: restoreMap(saved?.map) };
+        spaces.set(id, space);
+        return space;
+      })
+      .finally(() => loading.delete(id));
+    loading.set(id, pending);
   }
-  return s;
+  return pending;
 }
 
 function cleanText(v: unknown, max: number) {
@@ -177,21 +177,33 @@ const io = new Server<ClientToServer, ServerToClient>(server, { cors: { origin: 
 
 const dist = path.join(ROOT, 'dist');
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, spaces: spaces.size });
+  res.json({ ok: true, storage: store.kind, spaces: spaces.size });
 });
 
 /** Envio de imagens (fundo/primeiro plano das salas e interações de imagem), até 3 MB. */
-app.post('/api/upload', express.raw({ type: Object.keys(IMAGE_TYPES), limit: '3mb' }), (req, res) => {
+app.post('/api/upload', express.raw({ type: Object.keys(IMAGE_TYPES), limit: '3mb' }), async (req, res) => {
   const ext = IMAGE_TYPES[String(req.headers['content-type'])];
   if (!ext || !Buffer.isBuffer(req.body) || !req.body.length) {
     res.status(400).json({ error: 'Envie uma imagem PNG, JPG, GIF ou WEBP de até 3 MB.' });
     return;
   }
   const name = `${randomUUID()}.${ext}`;
-  writeFileSync(path.join(UPLOAD_DIR, name), req.body);
-  res.json({ url: `/uploads/${name}` });
+  try {
+    await store.saveUpload(name, String(req.headers['content-type']), req.body);
+    res.json({ url: `/uploads/${name}` });
+  } catch (err) {
+    console.error('Falha ao salvar upload', err);
+    res.status(500).json({ error: 'Não foi possível salvar a imagem.' });
+  }
 });
-app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '30d', immutable: true }));
+app.get('/uploads/:name', async (req, res) => {
+  const upload = /^[\w-]+\.(png|jpg|gif|webp)$/.test(req.params.name) ? await store.getUpload(req.params.name).catch(() => null) : null;
+  if (!upload) {
+    res.sendStatus(404);
+    return;
+  }
+  res.set({ 'Content-Type': upload.mime, 'Cache-Control': 'public, max-age=2592000, immutable' }).send(upload.data);
+});
 app.use(express.static(dist));
 app.get('*', (_req, res, next) => res.sendFile(path.join(dist, 'index.html'), err => err && next()));
 
@@ -244,11 +256,20 @@ io.on('connection', socket => {
     io.to(spaceId!).emit('player:moved', { id: p.id, room: p.room, x: p.x, y: p.y, dir: p.dir });
   }
 
-  socket.on('join', (req, ack) => {
+  socket.on('join', async (req, ack) => {
     if (spaceId || typeof ack !== 'function') return;
-    spaceId = cleanSpaceId(req?.space);
+    const id = cleanSpaceId(req?.space);
+    let space: Space;
+    try {
+      space = await getSpace(id);
+    } catch (err) {
+      console.error('Falha ao carregar espaço', id, err);
+      socket.disconnect();
+      return;
+    }
+    if (spaceId || !socket.connected) return;
+    spaceId = id;
     ownerTag = ownerTagFor(req?.clientKey);
-    const space = getSpace(spaceId);
     const room = space.map.entry;
     const pos = findSpawn(space, room);
     const player: PlayerState = {
@@ -324,6 +345,7 @@ io.on('connection', socket => {
     if (msg.scope === 'everyone') {
       space.chat.push(msg);
       if (space.chat.length > CHAT_HISTORY) space.chat.shift();
+      scheduleSave(spaceId, space);
       io.to(spaceId).emit('chat:message', msg);
     } else {
       for (const other of space.players.values())
@@ -437,6 +459,14 @@ io.on('connection', socket => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Praça rodando em http://localhost:${PORT}`);
-});
+store
+  .init()
+  .then(() => {
+    server.listen(PORT, () => {
+      console.log(`Praça rodando em http://localhost:${PORT} (armazenamento: ${store.kind})`);
+    });
+  })
+  .catch(err => {
+    console.error('Não foi possível iniciar o armazenamento:', err);
+    process.exit(1);
+  });

@@ -1,5 +1,6 @@
 import { TILE, footprint, type Floor, type Room } from '../../../shared/map';
 import { drawObject } from './objects';
+import { assetUrl } from '../base';
 
 const T = TILE;
 
@@ -173,7 +174,7 @@ export function getImage(url: string, onLoad: () => void) {
   if (!img) {
     img = new Image();
     img.onload = onLoad;
-    img.src = url;
+    img.src = assetUrl(url);
     images.set(url, img);
   }
   return img.complete && img.naturalWidth ? img : null;

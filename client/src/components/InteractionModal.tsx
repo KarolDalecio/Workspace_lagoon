@@ -1,6 +1,7 @@
 import { ExternalLink, X } from 'lucide-react';
 import { useEffect } from 'react';
 import type { Interaction } from '../../../shared/map';
+import { assetUrl } from '../base';
 
 /** Links de vídeo do YouTube só funcionam em iframe no formato /embed/. */
 function toEmbedUrl(url: string) {
@@ -36,7 +37,7 @@ export function InteractionModal({ interaction, onClose }: { interaction: Intera
           <h2>{title}</h2>
           <div className="tool-row">
             {url && (
-              <a className="icon" href={url} target="_blank" rel="noopener noreferrer" title="Abrir em nova aba">
+              <a className="icon" href={assetUrl(url)} target="_blank" rel="noopener noreferrer" title="Abrir em nova aba">
                 <ExternalLink size={18} />
               </a>
             )}
@@ -46,7 +47,7 @@ export function InteractionModal({ interaction, onClose }: { interaction: Intera
           </div>
         </header>
         {(kind === 'embed' || kind === 'video' || kind === 'image') && !url && <p className="hint">Este objeto ainda não tem endereço — configure no Mapmaker.</p>}
-        {kind === 'image' && url && <img className="modal-image" src={url} alt={title} />}
+        {kind === 'image' && url && <img className="modal-image" src={assetUrl(url)} alt={title} />}
         {(kind === 'embed' || kind === 'video') && url && (
           <>
             <iframe

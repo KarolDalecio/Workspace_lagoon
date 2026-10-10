@@ -10,6 +10,7 @@ import type {
   PlayerState,
   ServerToClient,
 } from '../../shared/types';
+import { apiPath } from './base';
 
 export type AppSocket = Socket<ServerToClient, ClientToServer>;
 
@@ -279,7 +280,7 @@ function clientKey() {
 export function joinSpace(partial: Omit<JoinRequest, 'clientKey'>): Promise<World> {
   const req: JoinRequest = { ...partial, clientKey: clientKey() };
   return new Promise((resolve, reject) => {
-    const socket: AppSocket = io({ reconnection: false });
+    const socket: AppSocket = io({ reconnection: false, path: apiPath('socket.io') });
     const fail = (msg: string) => {
       clearTimeout(timer);
       socket.disconnect();

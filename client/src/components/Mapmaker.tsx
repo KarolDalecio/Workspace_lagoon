@@ -48,6 +48,7 @@ import { drawFloor } from '../game/mapRenderer';
 import type { Point } from '../game/path';
 import type { World } from '../world';
 import { ObjectIcon, ObjectPicker, rotateStamp, type StampItem } from './ObjectPicker';
+import { apiPath, assetUrl } from '../base';
 
 type Mode = 'objects' | 'effects' | 'floor';
 type Tool = 'select' | 'stamp' | 'erase' | 'hand' | 'box';
@@ -120,7 +121,7 @@ function loadRecent(): string[] {
 
 export async function uploadImage(file: File): Promise<string> {
   if (file.size > 3 * 1024 * 1024) throw new Error('A imagem passa de 3 MB.');
-  const res = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
+  const res = await fetch(apiPath('api/upload'), { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.url) throw new Error(data.error ?? 'Não foi possível enviar a imagem.');
   return data.url;
@@ -289,7 +290,7 @@ function InteractionForm({ obj, onSave }: { obj: PlacedObject; onSave: (value: I
         <label>
           Imagem (PNG, JPG, GIF · até 3 MB)
           <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={e => onFile(e.target.files?.[0])} disabled={busy} />
-          {form.url && <img src={form.url} alt="" className="thumb" />}
+          {form.url && <img src={assetUrl(form.url)} alt="" className="thumb" />}
         </label>
       )}
       {form.kind !== 'note' && form.kind !== 'image' && (
@@ -872,7 +873,7 @@ export function Mapmaker({ world, engine, onClose, onToast }: { world: World; en
               </label>
               {room.background && (
                 <>
-                  <a className="mm-menu-item" href={room.background} target="_blank" rel="noreferrer">
+                  <a className="mm-menu-item" href={assetUrl(room.background)} target="_blank" rel="noreferrer">
                     Baixar fundo
                   </a>
                   <button className="mm-menu-item" onClick={() => edit({ kind: 'room-update', room: room.id, patch: { background: null } })}>
@@ -882,7 +883,7 @@ export function Mapmaker({ world, engine, onClose, onToast }: { world: World; en
               )}
               {room.foreground && (
                 <>
-                  <a className="mm-menu-item" href={room.foreground} target="_blank" rel="noreferrer">
+                  <a className="mm-menu-item" href={assetUrl(room.foreground)} target="_blank" rel="noreferrer">
                     Baixar primeiro plano
                   </a>
                   <button className="mm-menu-item" onClick={() => edit({ kind: 'room-update', room: room.id, patch: { foreground: null } })}>

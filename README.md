@@ -13,7 +13,7 @@ Plataforma de escritório virtual no estilo Gather: um mapa 2D onde cada pessoa 
 - **Escolha de microfone, câmera e alto-falante** no lobby e durante a conversa (engrenagem na barra), com medidor de nível do microfone
 - **Chat** "Todos" e "Por perto"
 - **Emotes** (teclas 1–5), **Alt+F para fumar** (cigarro com fumaça, visível para todos) e personalização de avatar
-- **Múltiplos espaços** por URL: `?space=nome-do-time`, cada um com suas salas salvas em `data/spaces/`
+- **Múltiplos espaços** por URL: `?space=nome-do-time`, cada um com suas salas salvas no Postgres (ou em `data/` localmente)
 - **Mapa padrão no layout do escritório remoto do Gather**: refeitório, sala de foco, jardim zen, lounge, pátio com ilhas de mesas, salas de reunião, jogos e biblioteca — e a porta "All Hands" leva ao Auditório
 - **Várias salas por espaço**, ligadas por **portais**
 - **Interações com X**: TV, quadro branco (Excalidraw colaborativo), mural, documentos — site, vídeo, imagem, link ou nota
@@ -40,19 +40,33 @@ Abra http://localhost:5173. Para testar com outra pessoa, abra outra janela/nave
 ## Produção
 
 ```bash
-npm run build
-npm start
+npm run build      # front-end em dist/ e servidor em dist-server/
+npm start          # porta $PORT (padrão 3001)
 ```
 
-O servidor (porta `$PORT`, padrão 3001) serve o front-end compilado em `dist/` e o Socket.IO.
+| Variável | Para quê |
+|---|---|
+| `PORT` | Porta do servidor (no Docker: 8080) |
+| `DATABASE_URL` | Postgres para mapas, chat e imagens enviadas. Sem ela, salva em `data/` |
+| `BASE_PATH` | **No build.** Prefixo público quando o app fica num subcaminho (ex.: `/workspace/`) |
 
-> WebRTC exige HTTPS fora de `localhost`. Para usuários atrás de NAT restritivo, configure um servidor TURN (ex.: coturn) em `client/src/rtc/peers.ts`.
+As tabelas (`spaces` e `uploads`) são criadas sozinhas na primeira inicialização.
+
+### Deploy no Dokploy (gprgai.top/workspace)
+
+1. **Banco:** no mesmo projeto, crie um *Database → PostgreSQL*. Copie a **Internal Connection URL** (algo como `postgresql://usuario:senha@nome-do-servico:5432/banco`).
+2. **App → Environment:** adicione `DATABASE_URL=<a URL interna do passo 1>`.
+3. **App → General → Build Type:** *Dockerfile*, com Docker File `Dockerfile` e Context Path `.` (os padrões). O Dockerfile já usa `BASE_PATH=/workspace/`; para outro caminho, defina o build arg `BASE_PATH`.
+4. **App → Domains:** Host `gprgai.top`, Path `/workspace`, Internal Path `/`, **Strip Path ligado**, Container Port `8080`, HTTPS com Let's Encrypt.
+5. Faça o deploy e abra https://gprgai.top/workspace. `https://gprgai.top/workspace/health` mostra `"storage":"postgres"` quando o banco está ligado.
+
+> WebRTC exige HTTPS (o Let's Encrypt resolve). Para usuários atrás de NAT restritivo (redes corporativas, 4G), configure um servidor TURN (ex.: coturn) em `client/src/rtc/peers.ts`.
 
 ## Estrutura
 
 ```
 shared/      tipos, mapa e regras de proximidade (usados por cliente e servidor)
-server/      Express + Socket.IO: espaços, jogadores, chat, sinalização WebRTC
+server/      Express + Socket.IO: espaços, jogadores, chat, sinalização WebRTC; store.ts (Postgres ou arquivos)
 client/src/
   game/      motor do jogo, renderização do mapa e avatares, pathfinding
   rtc/       mídia local e malha de conexões WebRTC
@@ -62,6 +76,6 @@ client/src/
 ## Próximos passos
 
 - SFU (LiveKit/mediasoup) para conversas com muitas pessoas (a malha P2P funciona bem até ~6–8)
-- Autenticação e persistência (espaços, mapas, histórico de chat)
+- Autenticação (hoje a identidade é o navegador)
 - Permissões de edição (hoje qualquer pessoa no espaço pode editar o mapa) e tamanho de mapa configurável
 - Indicador de quem está falando, status (ocupado/ausente), mensagens diretas

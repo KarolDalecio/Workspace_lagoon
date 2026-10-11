@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { Avatar } from '../../shared/types';
 import { apiPath } from './base';
 
 export interface AuthConfig {
@@ -10,6 +11,8 @@ export interface AuthConfig {
 export interface AuthUser {
   email: string;
   person: string;
+  /** Avatar salvo na conta (null se ainda não escolheu). */
+  avatar?: Avatar | null;
 }
 
 let client: SupabaseClient | null = null;
@@ -31,6 +34,12 @@ export async function accessToken() {
   if (!client) return undefined;
   const { data } = await client.auth.getSession();
   return data.session?.access_token;
+}
+
+/** Avatar salvo no servidor quando o login está desligado (desenvolvimento). */
+export async function devAvatar(): Promise<Avatar | null> {
+  const res = await fetch(apiPath('api/me'));
+  return res.ok ? ((await res.json()).avatar ?? null) : null;
 }
 
 /** Quem está logado, conferido pelo nosso servidor (que aplica a lista de e-mails). */

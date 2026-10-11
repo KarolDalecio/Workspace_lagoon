@@ -1,6 +1,7 @@
 import { io, type Socket } from 'socket.io-client';
 import { applyEdit, editDenied, type MapEdit, type SpaceMap, type Who } from '../../shared/map';
 import type {
+  Avatar,
   ChatMessage,
   ChatScope,
   ClientToServer,
@@ -32,6 +33,9 @@ export class World {
   emotes = new Map<string, { emoji: string; until: number }>();
   disconnected = false;
   map: SpaceMap;
+  /** Nome e código de convite do espaço. */
+  spaceName: string;
+  code: string;
   /** Hash público deste navegador, comparado com o dono de cada mesa. */
   ownerTag: string;
   /** Incrementa a cada mudança no mapa, para o motor redesenhar o cenário. */
@@ -52,6 +56,8 @@ export class World {
     public space: string,
     res: JoinResponse,
   ) {
+    this.spaceName = res.spaceName;
+    this.code = res.code;
     for (const p of res.players) this.add(p);
     this.chat = res.chat;
     this.map = res.map;
@@ -248,6 +254,22 @@ export class World {
     this.notify();
   }
 
+  /** Troca o avatar durante a sessão (o servidor salva na conta e avisa os outros). */
+  setAvatar(avatar: Avatar) {
+    this.self.avatar = avatar;
+    this.socket.emit('avatar', avatar);
+    this.notify();
+  }
+
+  /** Link de convite: quem abre entra no espaço mesmo sem ser membro ainda. */
+  get inviteUrl() {
+    const url = new URL(location.href);
+    url.search = '';
+    url.searchParams.set('space', this.space);
+    url.searchParams.set('code', this.code);
+    return url.toString();
+  }
+
   setMedia(audio: boolean, video: boolean) {
     const me = this.self;
     if (me.audio === audio && me.video === video) return;
@@ -302,6 +324,11 @@ export function joinSpace(partial: Omit<JoinRequest, 'clientKey'>, token?: strin
     socket.once('connect', () => {
       socket.emit('join', req, res => {
         clearTimeout(timer);
+        if ('error' in res) {
+          socket.disconnect();
+          reject(new Error(res.error));
+          return;
+        }
         resolve(new World(socket, res.selfId, res.space, res));
       });
     });

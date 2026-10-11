@@ -30,6 +30,9 @@ import { drawObject } from './objects';
 import { findPath, type Point } from './path';
 
 const STEP_MS = 140;
+/** No patinete cada passo leva menos da metade do tempo. */
+const SCOOTER_STEP_MS = 65;
+const stepFor = (p: { vehicle?: unknown }) => (p.vehicle ? SCOOTER_STEP_MS : STEP_MS);
 const SYNC_MS = 200;
 const KEY_DIR: Record<string, Dir> = {
   ArrowUp: 'up', w: 'up', W: 'up',
@@ -42,7 +45,9 @@ const DELTA: Record<Dir, [number, number]> = { up: [0, -1], down: [0, 1], left: 
 /** O que está ao alcance do jogador para a tecla X. */
 export type Focus =
   | { type: 'interaction'; obj: PlacedObject }
-  | { type: 'desk'; room: string; area: string; claim: DeskClaim | null };
+  | { type: 'desk'; room: string; area: string; claim: DeskClaim | null }
+  | { type: 'mount'; obj: PlacedObject }
+  | { type: 'dismount' };
 
 /** Onde a pessoa está: área privada e/ou holofote. */
 export interface Place {
@@ -405,7 +410,7 @@ export class Engine {
   };
 
   private step(now: number) {
-    if (now - this.lastStep < STEP_MS) return;
+    if (now - this.lastStep < stepFor(this.world.self)) return;
     const me = this.world.self;
     const room = this.world.map.rooms[me.room];
     if (!room) return;
@@ -457,7 +462,7 @@ export class Engine {
         p.ry = p.y;
         continue;
       }
-      const speed = (dt / STEP_MS) * (p.id === this.world.selfId ? 1 : 1.2);
+      const speed = (dt / stepFor(p)) * (p.id === this.world.selfId ? 1 : 1.2);
       if (dist <= speed) {
         p.rx = p.x;
         p.ry = p.y;
@@ -483,10 +488,15 @@ export class Engine {
     let focus: Focus | null = null;
     if (!this.mm && room) {
       const desk = deskAreaAt(room, me.x, me.y);
-      if (desk) focus = { type: 'desk', room: room.id, area: desk, claim: this.world.map.claims[claimKey(room.id, desk)] ?? null };
+      if (me.vehicle) focus = { type: 'dismount' };
+      else if (desk) focus = { type: 'desk', room: room.id, area: desk, claim: this.world.map.claims[claimKey(room.id, desk)] ?? null };
       else {
         const obj = interactionNear(room, me.x, me.y);
         if (obj) focus = { type: 'interaction', obj };
+        else {
+          const scooter = room.objects.find(o => o.type === 'scooter' && Math.max(Math.abs(o.x - me.x), Math.abs(o.y - me.y)) <= 1);
+          if (scooter) focus = { type: 'mount', obj: scooter };
+        }
       }
     }
     const key = JSON.stringify(focus);
@@ -654,7 +664,10 @@ export class Engine {
         ctx.stroke();
       }
       const moving = Math.abs(p.x - p.rx) + Math.abs(p.y - p.ry) > 0.01;
-      drawAvatar(ctx, px, py, p.avatar, p.dir, p.walk / STEP_MS, moving, p.action === 'smoke' ? smokeClock(now, p.id) : undefined);
+      drawAvatar(ctx, px, py, p.avatar, p.dir, p.walk / stepFor(p), moving, {
+        smokeClock: p.action === 'smoke' ? smokeClock(now, p.id) : undefined,
+        scooter: p.vehicle ? CATALOG.scooter.colors[p.vehicle.color] ?? CATALOG.scooter.colors[0] : undefined,
+      });
     }
     for (const p of players) if (p.action === 'smoke') drawSmoke(ctx, p.rx * TILE, p.ry * TILE, p.dir, smokeClock(now, p.id));
 
@@ -687,7 +700,7 @@ export class Engine {
     if (this.focus.type === 'desk') {
       const b = areaBounds(room, this.focus.area);
       if (b) this.outline(b, color);
-    } else this.outline(footprint(this.focus.obj), color);
+    } else if (this.focus.type === 'interaction' || this.focus.type === 'mount') this.outline(footprint(this.focus.obj), color);
   }
 
   private renderMapmaker(room: Room, viewW: number, viewH: number) {

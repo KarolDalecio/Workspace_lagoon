@@ -1,4 +1,4 @@
-import type { Avatar, Dir } from '../../../shared/types';
+import { cleanAvatar, type Avatar, type Dir } from '../../../shared/types';
 
 function shade(hex: string, amt: number) {
   const n = parseInt(hex.slice(1), 16);
@@ -20,69 +20,378 @@ function rrect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h
   ctx.fill();
 }
 
+const OUTLINE = '#1d1d28';
+
+function strokeCircle(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, fill: string) {
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+}
+
+function strokeRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, fill: string) {
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  ctx.fill();
+  ctx.stroke();
+}
+
+export interface AvatarExtras {
+  /** Relógio da fumaça (Alt+F); undefined = sem cigarro. */
+  smokeClock?: number;
+  /** Cor do patinete em que está andando. */
+  scooter?: string;
+}
+
+/** Patinete visto de cima/lado, sob os pés. `front` desenha só o guidão (vai na frente do corpo). */
+function drawScooter(ctx: CanvasRenderingContext2D, cx: number, py: number, dir: Dir, color: string, part: 'base' | 'front') {
+  const side = dir === 'left' || dir === 'right';
+  const sign = dir === 'left' ? -1 : 1;
+  if (part === 'base') {
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath();
+    ctx.ellipse(cx, py + 30, side ? 13 : 8, 2.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    if (side) {
+      circle(ctx, cx - 10, py + 28, 3, '#23262f');
+      circle(ctx, cx + 10, py + 28, 3, '#23262f');
+      rrect(ctx, cx - 11, py + 25, 22, 3, 1.5, color);
+      ctx.fillStyle = color;
+      ctx.fillRect(cx + 9 * sign - 1, py + 12, 2.5, 14);
+      ctx.fillRect(cx + 9 * sign - 3, py + 11, 7, 2);
+    } else {
+      rrect(ctx, cx - 4, py + 21, 8, 9, 2, color);
+      circle(ctx, cx, py + (dir === 'up' ? 21 : 30), 2.5, '#23262f');
+    }
+    return;
+  }
+  if (!side && dir === 'down') {
+    // guidão na frente do corpo
+    ctx.fillStyle = color;
+    ctx.fillRect(cx - 1, py + 15, 2.5, 13);
+    rrect(ctx, cx - 7, py + 14, 14, 2.5, 1, shade(color, -0.2));
+    circle(ctx, cx, py + 30, 2.5, '#23262f');
+  }
+  if (dir === 'up') {
+    ctx.fillStyle = color;
+    ctx.fillRect(cx - 1, py + 9, 2.5, 12);
+    rrect(ctx, cx - 7, py + 8, 14, 2.5, 1, shade(color, -0.2));
+  }
+}
+
+function drawHairBack(ctx: CanvasRenderingContext2D, cx: number, hy: number, av: Avatar, dir: Dir) {
+  const c = av.hair;
+  switch (av.hairStyle) {
+    case 1: // longo
+      strokeRect(ctx, cx - 9, hy - 5, 18, 16, 6, c);
+      break;
+    case 4: // black power
+      strokeCircle(ctx, cx, hy - 2, 11.5, c);
+      break;
+    case 5: // cacheado
+      for (const [dx, dy] of [[-8, 0], [8, 0], [-6, -6], [6, -6], [0, -8], [-8, 5], [8, 5]]) strokeCircle(ctx, cx + dx, hy + dy, 4, c);
+      break;
+    case 6: // rabo de cavalo
+      if (dir === 'left') strokeRect(ctx, cx + 6, hy - 2, 5, 11, 2.5, c);
+      else if (dir === 'right') strokeRect(ctx, cx - 11, hy - 2, 5, 11, 2.5, c);
+      else if (dir === 'up') strokeRect(ctx, cx - 2.5, hy, 5, 12, 2.5, c);
+      break;
+    case 9: // tranças
+      if (dir !== 'up') {
+        strokeRect(ctx, cx - 10, hy - 1, 4, 13, 2, c);
+        strokeRect(ctx, cx + 6, hy - 1, 4, 13, 2, c);
+      }
+      break;
+  }
+}
+
+function drawHairFront(ctx: CanvasRenderingContext2D, cx: number, hy: number, av: Avatar, dir: Dir) {
+  const c = av.hair;
+  const style = av.hairStyle;
+  if (style === 3) {
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = c;
+    ctx.beginPath();
+    ctx.arc(cx, hy - 1, 8.3, Math.PI, 0);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    return;
+  }
+  if (dir === 'up') {
+    // de costas: o cabelo cobre a cabeça
+    if (style === 1 || style === 9) strokeRect(ctx, cx - 9, hy - 5, 18, 16, 6, c);
+    else strokeCircle(ctx, cx, hy, 8.6, c);
+    if (style === 2) strokeCircle(ctx, cx, hy - 9, 4, c);
+    if (style === 5) for (const [dx, dy] of [[-5, -4], [5, -4], [0, 2]]) strokeCircle(ctx, cx + dx, hy + dy, 4, c);
+    return;
+  }
+  ctx.fillStyle = c;
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  if (style === 8) {
+    // franja: cobre a testa até as sobrancelhas
+    ctx.moveTo(cx - 8.8, hy + 1);
+    ctx.arc(cx, hy - 1, 8.8, Math.PI * 1.02, Math.PI * 1.98);
+    ctx.lineTo(cx + 8.8, hy + 1);
+    ctx.lineTo(cx - 8.8, hy + 1);
+  } else {
+    ctx.arc(cx, hy - 1, 8.6, Math.PI, 0);
+    ctx.closePath();
+  }
+  ctx.fill();
+  ctx.stroke();
+  if (dir === 'left') strokeRect(ctx, cx + 2, hy - 3, 6.6, 7, 2, c);
+  if (dir === 'right') strokeRect(ctx, cx - 8.6, hy - 3, 6.6, 7, 2, c);
+  if (style === 2) strokeCircle(ctx, cx, hy - 9, 4, c);
+  if (style === 7) {
+    ctx.fillStyle = c;
+    ctx.beginPath();
+    for (let i = -2; i <= 2; i++) {
+      ctx.moveTo(cx + i * 3.5 - 2.5, hy - 6);
+      ctx.lineTo(cx + i * 3.5, hy - 13 + Math.abs(i));
+      ctx.lineTo(cx + i * 3.5 + 2.5, hy - 6);
+    }
+    ctx.fill();
+  }
+}
+
+function drawHat(ctx: CanvasRenderingContext2D, cx: number, hy: number, av: Avatar, dir: Dir) {
+  const c = av.hatColor;
+  const dark = shade(c, -0.25);
+  switch (av.hat) {
+    case 1: {
+      // boné: copa + aba virada para onde olha
+      ctx.fillStyle = c;
+      ctx.strokeStyle = OUTLINE;
+      ctx.beginPath();
+      ctx.arc(cx, hy - 2, 9, Math.PI, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      if (dir === 'down') strokeRect(ctx, cx - 7, hy - 3, 14, 3, 1.5, dark);
+      if (dir === 'left') strokeRect(ctx, cx - 13, hy - 4, 8, 3, 1.5, dark);
+      if (dir === 'right') strokeRect(ctx, cx + 5, hy - 4, 8, 3, 1.5, dark);
+      circle(ctx, cx, hy - 11, 1.3, dark);
+      break;
+    }
+    case 2: // gorro
+      ctx.fillStyle = c;
+      ctx.strokeStyle = OUTLINE;
+      ctx.beginPath();
+      ctx.arc(cx, hy - 1, 9.2, Math.PI, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      strokeRect(ctx, cx - 9.5, hy - 3, 19, 3.5, 1.5, dark);
+      strokeCircle(ctx, cx, hy - 11, 2.5, '#f2f2f2');
+      break;
+    case 3: // quepe
+      strokeRect(ctx, cx - 10, hy - 11, 20, 8, 3, c);
+      ctx.fillStyle = '#f4d35e';
+      ctx.fillRect(cx - 9, hy - 5, 18, 1.5);
+      if (dir === 'down') strokeRect(ctx, cx - 7, hy - 3.5, 14, 2.5, 1, '#1d1d28');
+      circle(ctx, cx, hy - 8, 1.6, '#f4d35e');
+      break;
+    case 4: // chapéu de bruxo
+      ctx.fillStyle = c;
+      ctx.strokeStyle = OUTLINE;
+      ctx.beginPath();
+      ctx.moveTo(cx - 8, hy - 5);
+      ctx.lineTo(cx + 3, hy - 22);
+      ctx.lineTo(cx + 8, hy - 5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      strokeRect(ctx, cx - 12, hy - 6, 24, 3, 1.5, dark);
+      ctx.fillStyle = '#f4d35e';
+      ctx.fillRect(cx - 5, hy - 9, 10, 1.5);
+      break;
+    case 5: // fone de ouvido
+      ctx.strokeStyle = c;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, hy, 9.5, Math.PI * 1.05, Math.PI * 1.95);
+      ctx.stroke();
+      if (dir !== 'right') strokeRect(ctx, cx - 11, hy - 2, 4, 7, 2, dark);
+      if (dir !== 'left') strokeRect(ctx, cx + 7, hy - 2, 4, 7, 2, dark);
+      break;
+  }
+}
+
+function drawFace(ctx: CanvasRenderingContext2D, cx: number, hy: number, av: Avatar, dir: Dir) {
+  if (dir === 'up') return;
+  const eyes = dir === 'down' ? [cx - 3, cx + 3] : dir === 'left' ? [cx - 4.5] : [cx + 4.5];
+  for (const ex of eyes) {
+    rrect(ctx, ex - 1.1, hy + 0.3, 2.2, 2.8, 1, '#1d1d28');
+    circle(ctx, ex - 0.3, hy + 0.9, 0.5, '#ffffff');
+  }
+  // bochechas coradas, como nos bonecos do Gather
+  ctx.fillStyle = 'rgba(232,96,110,0.45)';
+  if (dir === 'down') {
+    ctx.fillRect(cx - 6.5, hy + 3.5, 2.5, 1.5);
+    ctx.fillRect(cx + 4, hy + 3.5, 2.5, 1.5);
+  } else ctx.fillRect(dir === 'left' ? cx - 3.5 : cx + 1, hy + 3.5, 2.5, 1.5);
+
+  const beard = shade(av.hair, -0.05);
+  if (av.facialHair === 1) rrect(ctx, dir === 'down' ? cx - 3 : dir === 'left' ? cx - 6 : cx + 1, hy + 4.5, dir === 'down' ? 6 : 5, 1.6, 0.8, beard);
+  if (av.facialHair === 2) {
+    ctx.fillStyle = beard;
+    ctx.beginPath();
+    ctx.arc(cx + (dir === 'left' ? -1 : dir === 'right' ? 1 : 0), hy + 2, 7.6, Math.PI * 0.1, Math.PI * 0.9);
+    ctx.lineTo(cx - 5, hy + 4);
+    ctx.fill();
+  }
+  if (av.facialHair === 3) rrect(ctx, (dir === 'down' ? cx : dir === 'left' ? cx - 3 : cx + 3) - 1.5, hy + 5.5, 3, 2.8, 1, beard);
+
+  if (av.glasses) {
+    const lens = av.glasses === 3 ? '#1d1d28' : 'rgba(200,230,255,0.35)';
+    ctx.strokeStyle = '#1d1d28';
+    ctx.lineWidth = 0.9;
+    for (const ex of eyes) {
+      ctx.fillStyle = lens;
+      ctx.beginPath();
+      if (av.glasses === 1) ctx.arc(ex, hy + 1.6, 2.3, 0, Math.PI * 2);
+      else ctx.rect(ex - 2.4, hy - 0.4, 4.8, 3.6);
+      ctx.fill();
+      ctx.stroke();
+    }
+    if (dir === 'down') {
+      ctx.beginPath();
+      ctx.moveTo(cx - 0.8, hy + 1.4);
+      ctx.lineTo(cx + 0.8, hy + 1.4);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawBody(ctx: CanvasRenderingContext2D, cx: number, py: number, by: number, av: Avatar, dir: Dir, swing: number, riding: boolean) {
+  const leg = av.bottom === 1 ? av.skin : av.pants;
+  // pernas (paradas em cima do patinete)
+  const l = riding ? 0 : Math.max(0, swing);
+  const r = riding ? 0 : Math.max(0, -swing);
+  strokeRect(ctx, cx - 5, by + 8, 4, 6 - l, 1, leg);
+  strokeRect(ctx, cx + 1, by + 8, 4, 6 - r, 1, leg);
+  if (av.bottom === 1) {
+    ctx.fillStyle = av.pants;
+    ctx.fillRect(cx - 5.5, by + 8, 11, 3);
+  }
+  // sapatos
+  rrect(ctx, cx - 5.5, by + 13 - l, 5, 2.4, 1, av.shoes);
+  rrect(ctx, cx + 0.5, by + 13 - r, 5, 2.4, 1, av.shoes);
+
+  const sleeveLong = av.top === 1 || av.top === 4 || av.top === 5;
+  const sleeve = av.top === 5 ? shade(av.shirt, -0.15) : shade(av.shirt, -0.12);
+  const armY = by + 1;
+  for (const [ax, s] of [[cx - 9.5, l], [cx + 6.5, r]] as const) {
+    strokeRect(ctx, ax, armY + s * 0.5, 3, 7, 1.5, sleeveLong ? sleeve : av.skin);
+    if (!sleeveLong) rrect(ctx, ax, armY + s * 0.5, 3, 3, 1.2, sleeve);
+  }
+
+  if (av.top === 3) {
+    // vestido: tronco + saia longa
+    ctx.fillStyle = av.shirt;
+    ctx.strokeStyle = OUTLINE;
+    ctx.beginPath();
+    ctx.moveTo(cx - 6, by);
+    ctx.lineTo(cx + 6, by);
+    ctx.lineTo(cx + 9, by + 12);
+    ctx.lineTo(cx - 9, by + 12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    return;
+  }
+  if (av.bottom === 2) {
+    ctx.fillStyle = av.pants;
+    ctx.strokeStyle = OUTLINE;
+    ctx.beginPath();
+    ctx.moveTo(cx - 6, by + 7);
+    ctx.lineTo(cx + 6, by + 7);
+    ctx.lineTo(cx + 8, by + 12);
+    ctx.lineTo(cx - 8, by + 12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  strokeRect(ctx, cx - 7, by, 14, 10, 4, av.top === 5 ? '#f2f2f2' : av.shirt);
+  if (av.top === 2) {
+    ctx.fillStyle = '#f2f2f2';
+    for (const y of [2.5, 5.5, 8.5]) ctx.fillRect(cx - 6.5, by + y, 13, 1.4);
+  }
+  if (av.top === 1 && dir !== 'up') {
+    // moletom: bolso e cordão
+    rrect(ctx, cx - 4, by + 5, 8, 3.5, 1, shade(av.shirt, -0.18));
+    ctx.fillStyle = '#f2f2f2';
+    ctx.fillRect(cx - 2, by + 1, 0.8, 3);
+    ctx.fillRect(cx + 1.2, by + 1, 0.8, 3);
+  }
+  if (av.top === 1 && dir === 'up') rrect(ctx, cx - 5, by - 1, 10, 5, 2.5, shade(av.shirt, -0.18));
+  if (av.top === 4 && dir !== 'up') {
+    // terno: paletó, camisa branca e gravata
+    ctx.fillStyle = '#f2f2f2';
+    ctx.beginPath();
+    ctx.moveTo(cx - 3, by + 0.5);
+    ctx.lineTo(cx + 3, by + 0.5);
+    ctx.lineTo(cx, by + 6);
+    ctx.fill();
+    ctx.fillStyle = '#c0392b';
+    ctx.fillRect(cx - 0.8, by + 1.5, 1.6, 5);
+  }
+  if (av.top === 5 && dir !== 'up') {
+    // jaqueta aberta sobre camiseta branca
+    ctx.fillStyle = av.shirt;
+    ctx.fillRect(cx - 6.5, by + 0.5, 4, 9);
+    ctx.fillRect(cx + 2.5, by + 0.5, 4, 9);
+  }
+}
+
 /** Desenha o avatar ocupando o tile cujo canto superior esquerdo é (px, py). */
 export function drawAvatar(
   ctx: CanvasRenderingContext2D,
   px: number,
   py: number,
-  av: Avatar,
+  avatar: Avatar,
   dir: Dir,
   phase: number,
   moving: boolean,
-  smokeClock?: number,
+  extras: AvatarExtras = {},
 ) {
+  const av = cleanAvatar(avatar);
   const cx = px + 16;
+  const riding = !!extras.scooter;
   const wave = Math.sin(phase * Math.PI);
-  const bob = moving ? Math.abs(wave) * 1.5 : 0;
-  const swing = moving ? wave * 2 : 0;
+  const bob = moving && !riding ? Math.abs(wave) * 1.5 : 0;
+  const swing = moving && !riding ? wave * 2 : 0;
+  const lift = riding ? 3 : 0;
+  const by = py + 14 - bob - lift;
 
-  ctx.fillStyle = 'rgba(0,0,0,0.22)';
-  ctx.beginPath();
-  ctx.ellipse(cx, py + 29, 9, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = '#2d3247';
-  ctx.fillRect(cx - 5, py + 22, 4, 6 - Math.max(0, swing));
-  ctx.fillRect(cx + 1, py + 22, 4, 6 - Math.max(0, -swing));
-
-  const arm = shade(av.shirt, -0.2);
-  rrect(ctx, cx - 9, py + 15 - bob + Math.max(0, swing) * 0.5, 3, 7, 1.5, arm);
-  rrect(ctx, cx + 6, py + 15 - bob + Math.max(0, -swing) * 0.5, 3, 7, 1.5, arm);
-  rrect(ctx, cx - 7, py + 14 - bob, 14, 10, 4, av.shirt);
-
-  const hy = py + 9 - bob;
-  const style = av.hairStyle;
-  if (style === 1 && dir !== 'up') rrect(ctx, cx - 9, hy - 5, 18, 15, 6, av.hair);
-  circle(ctx, cx, hy, 8, av.skin);
-
-  if (style === 3) {
-    ctx.globalAlpha = 0.35;
-    ctx.fillStyle = av.hair;
+  if (riding) drawScooter(ctx, cx, py, dir, extras.scooter!, 'base');
+  else {
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
     ctx.beginPath();
-    ctx.arc(cx, hy - 1, 8.4, Math.PI, 0);
+    ctx.ellipse(cx, py + 29, 9, 3, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.globalAlpha = 1;
-  } else if (dir === 'up') {
-    if (style === 1) rrect(ctx, cx - 9, hy - 5, 18, 15, 6, av.hair);
-    circle(ctx, cx, hy, 8.6, av.hair);
-  } else {
-    ctx.fillStyle = av.hair;
-    ctx.beginPath();
-    ctx.arc(cx, hy - 1, 8.6, Math.PI, 0);
-    ctx.fill();
-    if (dir === 'left') rrect(ctx, cx + 2, hy - 3, 6.6, 7, 2, av.hair);
-    if (dir === 'right') rrect(ctx, cx - 8.6, hy - 3, 6.6, 7, 2, av.hair);
   }
-  if (style === 2) circle(ctx, cx, hy - 9, 4, av.hair);
+  if (riding && dir === 'up') drawScooter(ctx, cx, py, dir, extras.scooter!, 'front');
 
-  const eye = '#1d1d28';
-  if (dir === 'down') {
-    circle(ctx, cx - 3, hy + 1.5, 1.3, eye);
-    circle(ctx, cx + 3, hy + 1.5, 1.3, eye);
-  } else if (dir === 'left') circle(ctx, cx - 4.5, hy + 1.5, 1.3, eye);
-  else if (dir === 'right') circle(ctx, cx + 4.5, hy + 1.5, 1.3, eye);
+  const hy = py + 9 - bob - lift;
+  if (dir !== 'up') drawHairBack(ctx, cx, hy, av, dir);
+  drawBody(ctx, cx, py, by, av, dir, swing, riding);
+  strokeCircle(ctx, cx, hy, 8, av.skin);
+  drawHairFront(ctx, cx, hy, av, dir);
+  drawFace(ctx, cx, hy, av, dir);
+  drawHat(ctx, cx, hy, av, dir);
+  if (dir === 'up') drawHairBack(ctx, cx, hy, av, dir);
 
-  if (smokeClock !== undefined) drawCigarette(ctx, cx, hy, dir, smokeClock);
+  if (riding && dir === 'down') drawScooter(ctx, cx, py, dir, extras.scooter!, 'front');
+  if (extras.smokeClock !== undefined) drawCigarette(ctx, cx, hy, dir, extras.smokeClock);
 }
 
 const SMOKE_CYCLE = 4000;

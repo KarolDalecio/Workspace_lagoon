@@ -1,84 +1,76 @@
-import { Mic, MicOff, Video, VideoOff } from 'lucide-react';
+import { ArrowLeft, Mic, MicOff, Pencil, Video, VideoOff } from 'lucide-react';
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
-import { AVATAR_OPTIONS, type Avatar } from '../../../shared/types';
-import { LocalMedia } from '../rtc/media';
+import type { Avatar } from '../../../shared/types';
+import { setAutoJoinSpace } from '../api';
 import { accessToken, type AuthUser } from '../auth';
+import { LocalMedia } from '../rtc/media';
 import { UnauthorizedError, joinSpace, type World } from '../world';
+import { AvatarEditor } from './AvatarEditor';
 import { AvatarPreview } from './AvatarPreview';
 import { DeviceSettings } from './DeviceSettings';
 
-const STORAGE_KEY = 'praca:profile';
+const NAME_KEY = 'praca:name';
 
-function randomOf<T>(list: T[]) {
-  return list[Math.floor(Math.random() * list.length)];
+export interface SpaceTarget {
+  id: string;
+  name?: string;
+  /** Código de convite (quando veio de um link ou foi digitado). */
+  code?: string;
 }
 
-function loadProfile(): { name: string; avatar: Avatar } {
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null');
-    if (saved?.avatar) return saved;
-  } catch {
-    // sem armazenamento disponível
-  }
-  return {
-    name: '',
-    avatar: {
-      skin: randomOf(AVATAR_OPTIONS.skin),
-      hair: randomOf(AVATAR_OPTIONS.hair),
-      shirt: randomOf(AVATAR_OPTIONS.shirt),
-      hairStyle: Math.floor(Math.random() * AVATAR_OPTIONS.hairStyles),
-    },
-  };
-}
-
-function Swatches({ colors, value, onChange }: { colors: string[]; value: string; onChange: (c: string) => void }) {
-  return (
-    <div className="swatches">
-      {colors.map(c => (
-        <button
-          key={c}
-          type="button"
-          className={`swatch ${c === value ? 'selected' : ''}`}
-          style={{ background: c }}
-          onClick={() => onChange(c)}
-          aria-label={c}
-        />
-      ))}
-    </div>
+/** Entra no espaço e marca para entrar direto da próxima vez (até clicar em "Sair"). */
+export async function enterSpace(target: SpaceTarget, name: string, avatar: Avatar, media: LocalMedia) {
+  const world = await joinSpace(
+    { space: target.id, code: target.code, name, avatar, audio: media.audioOn, video: media.videoOn },
+    await accessToken(),
   );
+  setAutoJoinSpace(world.space);
+  const url = new URL(location.href);
+  url.search = '';
+  url.searchParams.set('space', world.space);
+  history.replaceState(null, '', url);
+  return world;
 }
 
+/** Tela de pré-entrada: câmera, microfone, dispositivos e avatar antes de entrar no espaço. */
 export function Lobby({
-  onJoined,
+  target,
   user,
-  onLogout,
+  avatar,
+  onAvatarChange,
+  onBack,
+  onJoined,
   onUnauthorized,
 }: {
-  onJoined: (world: World, media: LocalMedia) => void;
+  target: SpaceTarget;
   /** Conta logada (null quando o login está desligado, em desenvolvimento). */
-  user?: AuthUser | null;
-  onLogout?: () => void;
-  onUnauthorized?: (message: string) => void;
+  user: AuthUser | null;
+  avatar: Avatar;
+  onAvatarChange: (avatar: Avatar) => void;
+  onBack: () => void;
+  onJoined: (world: World, media: LocalMedia) => void;
+  onUnauthorized: (message: string) => void;
 }) {
   const [media] = useState(() => new LocalMedia());
   useSyncExternalStore(media.subscribe, media.getVersion);
-  const [profile] = useState(loadProfile);
-  const [name, setName] = useState(user?.person ?? profile.name);
-  const [avatar, setAvatar] = useState<Avatar>(profile.avatar);
-  const [space, setSpace] = useState(() => new URLSearchParams(location.search).get('space') ?? 'principal');
+  const [name, setName] = useState(() => user?.person ?? localStorage.getItem(NAME_KEY) ?? '');
+  const [editing, setEditing] = useState(false);
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const joined = useRef(false);
 
   useEffect(() => {
     void media.init();
+    // Se a pessoa voltar sem entrar, desliga câmera e microfone.
+    return () => {
+      if (!joined.current) media.stop();
+    };
   }, [media]);
 
   useEffect(() => {
     if (videoRef.current) videoRef.current.srcObject = media.stream;
   }, [media.stream]);
-
-  const patch = (p: Partial<Avatar>) => setAvatar(a => ({ ...a, ...p }));
 
   async function join(e: FormEvent) {
     e.preventDefault();
@@ -87,18 +79,16 @@ export function Lobby({
     setJoining(true);
     setError(null);
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ name: trimmed, avatar }));
+      localStorage.setItem(NAME_KEY, trimmed);
     } catch {
       // ignora
     }
     try {
-      const world = await joinSpace({ space, name: trimmed, avatar, audio: media.audioOn, video: media.videoOn }, await accessToken());
-      const url = new URL(location.href);
-      url.searchParams.set('space', world.space);
-      history.replaceState(null, '', url);
+      const world = await enterSpace(target, trimmed, avatar, media);
+      joined.current = true;
       onJoined(world, media);
     } catch (err) {
-      if (err instanceof UnauthorizedError && onUnauthorized) {
+      if (err instanceof UnauthorizedError) {
         onUnauthorized(err.message);
         return;
       }
@@ -110,10 +100,13 @@ export function Lobby({
   return (
     <div className="lobby">
       <form className="lobby-card" onSubmit={join}>
+        <button type="button" className="back" onClick={onBack}>
+          <ArrowLeft size={16} /> Meus espaços
+        </button>
         <div className="brand">
-          <span className="brand-dot" /> Praça
+          <span className="brand-dot" /> {target.name ?? target.id}
         </div>
-        <p className="lobby-sub">Seu escritório virtual. Ande até alguém para conversar.</p>
+        <p className="lobby-sub">Confira câmera e microfone antes de entrar.</p>
 
         <div className="lobby-grid">
           <div className="lobby-media">
@@ -148,50 +141,28 @@ export function Lobby({
           </div>
 
           <div className="lobby-form">
-            {user && (
+            {user ? (
               <div className="account">
                 <span>
                   Entrando como <strong>{user.person}</strong>
                   <small>{user.email}</small>
                 </span>
-                {onLogout && (
-                  <button type="button" className="chip" onClick={onLogout}>
-                    Sair da conta
-                  </button>
-                )}
               </div>
+            ) : (
+              <label>
+                Seu nome
+                <input value={name} onChange={e => setName(e.target.value)} maxLength={24} placeholder="Como te chamam?" autoFocus />
+              </label>
             )}
-            <label hidden={!!user}>
-              Seu nome
-              <input value={name} onChange={e => setName(e.target.value)} maxLength={24} placeholder="Como te chamam?" autoFocus={!user} />
-            </label>
-            <label>
-              Espaço
-              <input value={space} onChange={e => setSpace(e.target.value)} maxLength={40} placeholder="principal" />
-            </label>
 
             <div className="customizer">
-              <AvatarPreview avatar={avatar} size={72} />
-              <div className="customizer-options">
-                <span>Pele</span>
-                <Swatches colors={AVATAR_OPTIONS.skin} value={avatar.skin} onChange={skin => patch({ skin })} />
-                <span>Cabelo</span>
-                <Swatches colors={AVATAR_OPTIONS.hair} value={avatar.hair} onChange={hair => patch({ hair })} />
-                <span>Roupa</span>
-                <Swatches colors={AVATAR_OPTIONS.shirt} value={avatar.shirt} onChange={shirt => patch({ shirt })} />
-                <span>Estilo</span>
-                <div className="styles">
-                  {['Curto', 'Longo', 'Coque', 'Raspado'].map((label, i) => (
-                    <button
-                      key={label}
-                      type="button"
-                      className={`chip ${avatar.hairStyle === i ? 'selected' : ''}`}
-                      onClick={() => patch({ hairStyle: i })}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
+              <AvatarPreview avatar={avatar} size={84} />
+              <div>
+                <strong>Seu avatar</strong>
+                <p className="hint">Cabelo, roupas, chapéu, óculos e mais.</p>
+                <button type="button" className="chip" onClick={() => setEditing(true)}>
+                  <Pencil size={14} /> Editar avatar
+                </button>
               </div>
             </div>
 
@@ -202,6 +173,17 @@ export function Lobby({
           </div>
         </div>
       </form>
+      {editing && (
+        <AvatarEditor
+          name={user?.person ?? name}
+          initial={avatar}
+          onClose={() => setEditing(false)}
+          onSave={a => {
+            onAvatarChange(a);
+            setEditing(false);
+          }}
+        />
+      )}
     </div>
   );
 }

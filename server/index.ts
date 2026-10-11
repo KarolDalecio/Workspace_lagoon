@@ -27,12 +27,11 @@ import {
 } from '../shared/map';
 import { canHear } from '../shared/proximity';
 import { authMode, bearer, publicAuthConfig, verifyToken, type AuthUser } from './auth';
-import { createStore } from './store';
+import { createStore, type SpaceMeta } from './store';
 import {
-  AVATAR_OPTIONS,
   EMOTES,
+  cleanAvatar,
   PLAYER_ACTIONS,
-  type Avatar,
   type ChatMessage,
   type ClientToServer,
   type Dir,
@@ -51,7 +50,24 @@ interface Space {
   players: Map<string, PlayerState>;
   chat: ChatMessage[];
   map: SpaceMap;
+  meta: SpaceMeta;
   saveTimer?: NodeJS.Timeout;
+}
+
+const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+/** Código curto e fácil de ditar (sem 0/O, 1/I/L). */
+async function newCode() {
+  for (;;) {
+    const bytes = randomBytes(6);
+    const code = [...bytes].map(b => CODE_CHARS[b % CODE_CHARS.length]).join('');
+    if (!(await store.findSpaceByCode(code))) return code;
+  }
+}
+
+/** Chave da pessoa para membros e perfis ("dev" quando o login está desligado). */
+function personKey(user: AuthUser | undefined) {
+  return user ? user.person.trim().toLowerCase() : 'dev';
 }
 
 const spaces = new Map<string, Space>();
@@ -104,31 +120,53 @@ function scheduleSave(id: string, space: Space) {
   clearTimeout(space.saveTimer);
   space.saveTimer = setTimeout(() => {
     space.saveTimer = undefined;
-    store.saveSpace(id, space.map, space.chat).catch(err => console.error('Falha ao salvar espaço', id, err));
+    store.saveSpace(id, space.map, space.chat, space.meta).catch(err => console.error('Falha ao salvar espaço', id, err));
   }, 1000);
 }
 
-async function getSpace(id: string): Promise<Space> {
+/**
+ * Carrega um espaço. Se não existir, só cria quando `createAs` (nome) é passado;
+ * senão retorna null (ninguém cria espaço só por digitar uma URL).
+ */
+async function getSpace(id: string, createAs?: string): Promise<Space | null> {
   const loaded = spaces.get(id);
   if (loaded) return loaded;
   let pending = loading.get(id);
   if (!pending) {
-    pending = store
-      .loadSpace(id)
-      .then(saved => {
-        const space: Space = { players: new Map(), chat: saved?.chat.slice(-CHAT_HISTORY) ?? [], map: restoreMap(saved?.map) };
-        spaces.set(id, space);
-        if (migrateMap(space.map) && saved) {
-          Object.values(space.map.rooms).forEach(fillWhiteboards);
-          console.log(`Espaço "${id}" migrado para a versão ${space.map.version}`);
-          scheduleSave(id, space);
-        }
-        return space;
-      })
-      .finally(() => loading.delete(id));
+    pending = (async () => {
+      const saved = await store.loadSpace(id);
+      if (!saved && !createAs) return null as unknown as Space;
+      const meta = saved?.meta ?? { name: createAs ?? id, code: await newCode() };
+      const space: Space = { players: new Map(), chat: saved?.chat.slice(-CHAT_HISTORY) ?? [], map: restoreMap(saved?.map), meta };
+      spaces.set(id, space);
+      const migrated = saved ? migrateMap(space.map) : false;
+      if (migrated) {
+        Object.values(space.map.rooms).forEach(fillWhiteboards);
+        console.log(`Espaço "${id}" migrado para a versão ${space.map.version}`);
+      }
+      // Espaço novo ou antigo sem nome/código: grava na hora (o código já precisa ser encontrável).
+      if (!saved || !saved.meta) await store.saveSpace(id, space.map, space.chat, space.meta);
+      else if (migrated) scheduleSave(id, space);
+      return space;
+    })().finally(() => loading.delete(id));
     loading.set(id, pending);
   }
-  return pending;
+  return (await pending) ?? null;
+}
+
+/** Login da requisição HTTP (ou a pessoa "dev" quando o login está desligado). */
+async function requireUser(req: express.Request, res: express.Response) {
+  if (authMode === 'disabled') return { person: 'dev', user: undefined as AuthUser | undefined };
+  if (authMode === 'misconfigured') {
+    res.status(503).json({ error: 'Login não configurado.' });
+    return null;
+  }
+  const user = await verifyToken(bearer(req.headers.authorization));
+  if (!user) {
+    res.status(401).json({ error: 'Faça login.' });
+    return null;
+  }
+  return { person: personKey(user), user };
 }
 
 function cleanText(v: unknown, max: number) {
@@ -138,20 +176,6 @@ function cleanText(v: unknown, max: number) {
 function cleanSpaceId(v: unknown) {
   const id = cleanText(v, 40).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
   return id || 'principal';
-}
-
-function pick(list: string[], v: unknown) {
-  return typeof v === 'string' && list.includes(v) ? v : list[0];
-}
-
-function cleanAvatar(a: Partial<Avatar> | undefined): Avatar {
-  const style = Number(a?.hairStyle);
-  return {
-    skin: pick(AVATAR_OPTIONS.skin, a?.skin),
-    hair: pick(AVATAR_OPTIONS.hair, a?.hair),
-    shirt: pick(AVATAR_OPTIONS.shirt, a?.shirt),
-    hairStyle: Number.isInteger(style) && style >= 0 && style < AVATAR_OPTIONS.hairStyles ? style : 0,
-  };
 }
 
 /** Hash público da chave do navegador: identifica o dono da mesa sem expor a chave. */
@@ -214,7 +238,7 @@ app.get('/api/config', (_req, res) => {
 
 app.get('/api/me', async (req, res) => {
   if (authMode === 'disabled') {
-    res.json({ auth: 'disabled' });
+    res.json({ auth: 'disabled', avatar: await store.loadProfile('dev') });
     return;
   }
   const user = await verifyToken(bearer(req.headers.authorization));
@@ -222,7 +246,54 @@ app.get('/api/me', async (req, res) => {
     res.status(401).json({ error: 'Acesso não autorizado para este e-mail.' });
     return;
   }
-  res.json(user);
+  res.json({ ...user, avatar: await store.loadProfile(personKey(user)) });
+});
+
+app.put('/api/me/avatar', express.json({ limit: '10kb' }), async (req, res) => {
+  const who = await requireUser(req, res);
+  if (!who) return;
+  const avatar = cleanAvatar(req.body?.avatar);
+  await store.saveProfile(who.person, avatar);
+  res.json({ avatar });
+});
+
+/** Espaços visitados recentemente pela pessoa (com quantos estão online agora). */
+app.get('/api/spaces', async (req, res) => {
+  const who = await requireUser(req, res);
+  if (!who) return;
+  const list = await store.listMemberships(who.person);
+  res.json(list.map(m => ({ id: m.spaceId, name: m.name, code: m.code, lastVisited: m.lastVisited, online: spaces.get(m.spaceId)?.players.size ?? 0 })));
+});
+
+/** Cria um espaço novo (com o escritório padrão) e já torna a pessoa membro. */
+app.post('/api/spaces', express.json({ limit: '10kb' }), async (req, res) => {
+  const who = await requireUser(req, res);
+  if (!who) return;
+  const name = cleanText(req.body?.name, 40);
+  if (!name) {
+    res.status(400).json({ error: 'Dê um nome ao espaço.' });
+    return;
+  }
+  const slug = cleanSpaceId(name.normalize('NFD').replace(/[\u0300-\u036f]/g, '')).slice(0, 28);
+  const id = `${slug}-${randomBytes(3).toString('hex')}`;
+  const space = await getSpace(id, name);
+  await store.touchMembership(who.person, id);
+  res.json({ id, name: space!.meta.name, code: space!.meta.code });
+});
+
+/** Entrar com código: descobre o espaço e torna a pessoa membro. */
+app.post('/api/spaces/join', express.json({ limit: '1kb' }), async (req, res) => {
+  const who = await requireUser(req, res);
+  if (!who) return;
+  const code = cleanText(req.body?.code, 12).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const id = code ? ([...spaces.entries()].find(([, s]) => s.meta.code === code)?.[0] ?? (await store.findSpaceByCode(code))) : null;
+  const space = id ? await getSpace(id) : null;
+  if (!id || !space) {
+    res.status(404).json({ error: 'Nenhum espaço com esse código.' });
+    return;
+  }
+  await store.touchMembership(who.person, id);
+  res.json({ id, name: space.meta.name, code: space.meta.code });
 });
 
 const dist = path.join(ROOT, 'dist');
@@ -301,6 +372,19 @@ io.on('connection', socket => {
     }
   }
 
+  /** Desce do patinete: ele fica estacionado onde a pessoa está. */
+  function parkVehicle(space: Space, p: PlayerState) {
+    const v = p.vehicle;
+    if (!v) return;
+    p.vehicle = null;
+    const room = space.map.rooms[p.room];
+    const id = room?.objects.some(o => o.id === v.id) ? `${v.id}-${Date.now().toString(36)}` : v.id;
+    const applied = room && applyEdit(space.map, { kind: 'obj-add', room: room.id, obj: { id, type: 'scooter', x: p.x, y: p.y, color: v.color, rot: 0 } });
+    if (applied) io.to(spaceId!).emit('map:edited', applied.op);
+    io.to(spaceId!).emit('player:updated', { id: p.id, vehicle: null });
+    scheduleSave(spaceId!, space);
+  }
+
   /** Leva alguém para outra sala (portal, ou sala apagada) e avisa todos. */
   function relocate(space: Space, p: PlayerState, roomId: string, x?: number, y?: number) {
     const pos = x !== undefined && y !== undefined ? { x, y } : findSpawn(space, roomId);
@@ -313,9 +397,26 @@ io.on('connection', socket => {
   socket.on('join', async (req, ack) => {
     if (spaceId || typeof ack !== 'function') return;
     const id = cleanSpaceId(req?.space);
-    let space: Space;
+    const user = socket.data.user;
+    const person = personKey(user);
+    let space: Space | null;
     try {
-      space = await getSpace(id);
+      // Sem login (desenvolvimento) qualquer espaço é criado ao entrar; com login, só existentes.
+      space = await getSpace(id, authMode === 'disabled' ? id : undefined);
+      if (!space) {
+        ack({ error: 'Espaço não encontrado. Confira o link ou o código.' });
+        return;
+      }
+      if (authMode !== 'disabled' && !(await store.isMember(person, id))) {
+        const code = cleanText(req?.code, 12).toUpperCase();
+        // Membro novo: precisa do código. Espaço antigo sem nenhum membro aceita o primeiro.
+        if (code !== space.meta.code && (await store.hasMembers(id))) {
+          ack({ error: 'Este espaço é privado: entre pelo link de convite ou com o código.' });
+          return;
+        }
+      }
+      await store.touchMembership(person, id);
+      if (user) await store.saveProfile(person, cleanAvatar(req?.avatar));
     } catch (err) {
       console.error('Falha ao carregar espaço', id, err);
       socket.disconnect();
@@ -323,7 +424,6 @@ io.on('connection', socket => {
     }
     if (spaceId || !socket.connected) return;
     spaceId = id;
-    const user = socket.data.user;
     ownerTag = user ? personTag(user.person) : ownerTagFor(req?.clientKey);
     const room = space.map.entry;
     const pos = findSpawn(space, room);
@@ -340,10 +440,20 @@ io.on('connection', socket => {
       audio: !!req?.audio,
       video: !!req?.video,
       action: null,
+      vehicle: null,
     };
     space.players.set(socket.id, player);
     socket.join(spaceId);
-    ack({ selfId: socket.id, space: spaceId, players: [...space.players.values()], chat: space.chat, map: space.map, ownerTag });
+    ack({
+      selfId: socket.id,
+      space: spaceId,
+      spaceName: space.meta.name,
+      code: space.meta.code,
+      players: [...space.players.values()],
+      chat: space.chat,
+      map: space.map,
+      ownerTag,
+    });
     socket.to(spaceId).emit('player:joined', player);
   });
 
@@ -421,6 +531,14 @@ io.on('connection', socket => {
     if (p && spaceId && EMOTES.includes(emoji)) socket.to(spaceId).emit('emote', { id: p.id, emoji });
   });
 
+  socket.on('avatar', a => {
+    const p = me();
+    if (!p || !spaceId) return;
+    p.avatar = cleanAvatar(a);
+    io.to(spaceId).emit('player:updated', { id: p.id, avatar: p.avatar });
+    if (socket.data.user) void store.saveProfile(personKey(socket.data.user), p.avatar).catch(() => {});
+  });
+
   socket.on('media', m => {
     const p = me();
     if (!p || !spaceId) return;
@@ -434,6 +552,28 @@ io.on('connection', socket => {
     if (!p || !spaceId) return;
     p.action = a && PLAYER_ACTIONS.includes(a) ? a : null;
     socket.to(spaceId).emit('player:updated', { id: p.id, action: p.action });
+  });
+
+  /** Sobe num patinete ao lado: o objeto sai do mapa e vira o veículo da pessoa. */
+  socket.on('vehicle:mount', objectId => {
+    const p = me();
+    const space = current();
+    if (!p || !space || !spaceId || p.vehicle || typeof objectId !== 'string') return;
+    const room = space.map.rooms[p.room];
+    const obj = room?.objects.find(o => o.id === objectId && o.type === 'scooter');
+    if (!room || !obj || Math.max(Math.abs(obj.x - p.x), Math.abs(obj.y - p.y)) > 1) return;
+    const applied = applyEdit(space.map, { kind: 'obj-remove', room: room.id, id: obj.id });
+    if (!applied) return;
+    io.to(spaceId).emit('map:edited', applied.op);
+    p.vehicle = { type: 'scooter', color: obj.color, id: obj.id };
+    io.to(spaceId).emit('player:updated', { id: p.id, vehicle: p.vehicle });
+    scheduleSave(spaceId, space);
+  });
+
+  socket.on('vehicle:dismount', () => {
+    const p = me();
+    const space = current();
+    if (p && space && spaceId) parkVehicle(space, p);
   });
 
   socket.on('map:edit', (edit: MapEdit) => {
@@ -538,6 +678,8 @@ io.on('connection', socket => {
   socket.on('disconnect', () => {
     const space = current();
     if (!space || !spaceId) return;
+    const leaving = space.players.get(socket.id);
+    if (leaving?.vehicle) parkVehicle(space, leaving);
     space.players.delete(socket.id);
     io.to(spaceId).emit('player:left', socket.id);
     // O mapa fica salvo em disco; descarrega da memória só depois de gravar.
@@ -556,7 +698,7 @@ async function shutdown(signal: string) {
     pending.map(([id, s]) => {
       clearTimeout(s.saveTimer);
       s.saveTimer = undefined;
-      return store.saveSpace(id, s.map, s.chat);
+      return store.saveSpace(id, s.map, s.chat, s.meta);
     }),
   );
   process.exit(0);

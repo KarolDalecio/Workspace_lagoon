@@ -6,6 +6,9 @@ Plataforma de escritório virtual no estilo Gather: um mapa 2D onde cada pessoa 
 
 - **Mapa 2D** em canvas: escritório com salas de reunião, cabines de foco, biblioteca, cozinha, lounge, recepção e jardim
 - **Login** (Supabase Auth) restrito a uma lista de e-mails, validado no servidor a cada conexão
+- **Espaços com código**: depois do login você entra direto no último espaço; "Sair" leva à tela inicial com os espaços visitados recentemente. Só entra quem é membro ou tem o link de convite/código. Dá para criar espaços novos
+- **Editor de avatar** no estilo do Gather (cabelo, barba, roupas, sapatos, chapéu, óculos e cores), salvo na conta
+- **Patinetes**: aperte X perto de um para subir e andar com o dobro da velocidade; X de novo estaciona onde você está
 - **Movimento** com WASD/setas ou clique duplo no mapa (pathfinding BFS); arrastar move a câmera e a rodinha dá zoom no cursor
 - **Multiplayer em tempo real** via Socket.IO, com validação de movimento no servidor
 - **Vídeo e áudio por proximidade** (WebRTC P2P): conecta a até 3 tiles de distância, com volume que diminui conforme a distância

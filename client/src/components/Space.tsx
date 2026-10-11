@@ -22,13 +22,26 @@ import { Engine, type Focus, type Place } from '../game/engine';
 import type { LocalMedia } from '../rtc/media';
 import { PeerManager } from '../rtc/peers';
 import type { World } from '../world';
+import type { Avatar } from '../../../shared/types';
+import { AvatarEditor } from './AvatarEditor';
+import { AvatarPreview } from './AvatarPreview';
 import { DeviceSettings } from './DeviceSettings';
 import { InteractionModal } from './InteractionModal';
 import { Mapmaker } from './Mapmaker';
 import { ChatPanel, PeoplePanel } from './Panels';
 import { VideoStrip } from './VideoStrip';
 
-export function Space({ world, media, onLeave }: { world: World; media: LocalMedia; onLeave: () => void }) {
+export function Space({
+  world,
+  media,
+  onLeave,
+  onAvatarChange,
+}: {
+  world: World;
+  media: LocalMedia;
+  onLeave: () => void;
+  onAvatarChange?: (avatar: Avatar) => void;
+}) {
   useSyncExternalStore(world.subscribe, world.getVersion);
   useSyncExternalStore(media.subscribe, media.getVersion);
 
@@ -43,6 +56,7 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
   const [modal, setModal] = useState<Interaction | null>(null);
   const [emoteOpen, setEmoteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [editingAvatar, setEditingAvatar] = useState(false);
   const [seenChat, setSeenChat] = useState(world.chat.length);
   const [toast, setToast] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(true);
@@ -91,6 +105,14 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
 
   /** Tecla X (ou clique no aviso): abre o objeto ou ocupa/libera a mesa. */
   function interact(f: Focus) {
+    if (f.type === 'mount') {
+      world.socket.emit('vehicle:mount', f.obj.id);
+      return;
+    }
+    if (f.type === 'dismount') {
+      world.socket.emit('vehicle:dismount');
+      return;
+    }
     if (f.type === 'interaction') {
       if (f.obj.interaction?.kind === 'link' && f.obj.interaction.url) window.open(f.obj.interaction.url, '_blank', 'noopener');
       else if (f.obj.interaction) setModal(f.obj.interaction);
@@ -108,6 +130,18 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
   interactRef.current = interact;
 
   function focusLabel(f: Focus) {
+    if (f.type === 'mount')
+      return (
+        <>
+          🛴 Aperte <kbd>X</kbd> para subir no patinete
+        </>
+      );
+    if (f.type === 'dismount')
+      return (
+        <>
+          🛴 No patinete · aperte <kbd>X</kbd> para descer
+        </>
+      );
     if (f.type === 'interaction')
       return (
         <>
@@ -134,10 +168,10 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
   }
 
   async function copyInvite() {
-    const url = `${location.origin}${location.pathname}?space=${encodeURIComponent(world.space)}`;
+    const url = world.inviteUrl;
     try {
       await navigator.clipboard.writeText(url);
-      setToast('Link de convite copiado');
+      setToast(`Link de convite copiado · código ${world.code}`);
     } catch {
       setToast(url);
     }
@@ -158,6 +192,18 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
           </button>
         )}
         {modal && <InteractionModal interaction={modal} onClose={() => setModal(null)} />}
+        {editingAvatar && (
+          <AvatarEditor
+            name={world.self.name}
+            initial={world.self.avatar}
+            onClose={() => setEditingAvatar(false)}
+            onSave={a => {
+              world.setAvatar(a);
+              onAvatarChange?.(a);
+              setEditingAvatar(false);
+            }}
+          />
+        )}
         {!mapmaker && place.spotlight && (
           <div className="area-banner spotlight">
             📢 Você está no <strong>holofote</strong> — todos em {roomName} te veem e ouvem
@@ -207,8 +253,11 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
 
       <nav className="toolbar">
         <div className="tb-group">
-          <span className="space-name" title="Espaço">
-            {world.space}
+          <button className="profile-btn" onClick={() => setEditingAvatar(true)} title="Editar avatar">
+            <AvatarPreview avatar={world.self.avatar} size={30} />
+          </button>
+          <span className="space-name" title={`Espaço · código ${world.code}`}>
+            {world.spaceName}
           </span>
           <button className="icon" onClick={copyInvite} title="Copiar link de convite">
             <Link2 size={18} />

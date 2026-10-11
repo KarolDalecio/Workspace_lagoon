@@ -36,25 +36,43 @@ function VideoTile({
   onExpand,
 }: TileProps) {
   const ref = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  // A voz vai num <audio> separado do vídeo. Com a câmera da outra pessoa desligada,
+  // a trilha de vídeo nunca recebe quadros e o <video> fica parado esperando por eles,
+  // segurando o som junto. O <video> fica sempre mudo e só mostra a imagem.
+  const audioTrack = stream?.getAudioTracks()[0] ?? null;
+  const videoTrack = stream?.getVideoTracks()[0] ?? null;
+
+  useEffect(() => {
+    const el = audioRef.current;
+    if (el && sinkId && 'setSinkId' in el) void el.setSinkId(sinkId).catch(() => {});
+  }, [sinkId]);
 
   useEffect(() => {
     const el = ref.current;
-    if (el && !self && sinkId && 'setSinkId' in el) void el.setSinkId(sinkId).catch(() => {});
-  }, [sinkId, self]);
+    if (!el) return;
+    if (self) {
+      if (el.srcObject !== stream) el.srcObject = stream;
+      return;
+    }
+    el.srcObject = videoTrack ? new MediaStream([videoTrack]) : null;
+    if (videoTrack) el.play().catch(() => {});
+  }, [stream, videoTrack, self]);
 
   useEffect(() => {
-    const el = ref.current;
-    if (!el || el.srcObject === stream) return;
-    el.srcObject = stream;
+    const el = audioRef.current;
+    if (!el || self) return;
+    el.srcObject = audioTrack ? new MediaStream([audioTrack]) : null;
     // Sem interação prévia do usuário o navegador pode bloquear áudio com autoplay.
-    if (stream && !self)
+    if (audioTrack)
       el.play().catch((err: DOMException) => {
         if (err.name === 'NotAllowedError') onAutoplayBlocked?.();
       });
-  }, [stream, self, onAutoplayBlocked]);
+  }, [audioTrack, self, onAutoplayBlocked]);
 
   useEffect(() => {
-    const el = ref.current;
+    const el = audioRef.current;
     if (!el || self || !mediaEls) return;
     mediaEls.set(id, el);
     return () => {
@@ -64,7 +82,8 @@ function VideoTile({
 
   return (
     <div className="tile" onClick={videoOn ? onExpand : undefined}>
-      <video ref={ref} autoPlay playsInline muted={self} className={`${videoOn ? '' : 'hidden'} ${mirror ? 'mirror' : ''}`} />
+      <video ref={ref} autoPlay playsInline muted className={`${videoOn ? '' : 'hidden'} ${mirror ? 'mirror' : ''}`} />
+      {!self && <audio ref={audioRef} autoPlay />}
       {!videoOn && (
         <div className="tile-avatar">
           <AvatarPreview avatar={avatar} size={56} />

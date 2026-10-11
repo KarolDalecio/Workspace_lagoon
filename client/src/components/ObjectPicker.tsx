@@ -11,7 +11,7 @@ export interface StampItem {
 }
 
 /** Miniatura de um objeto do catálogo (desenhado sobre piso de madeira). */
-export function ObjectIcon({ type, color = 0, rot, size = 40 }: { type: string; color?: number; rot?: number; size?: number }) {
+export function ObjectIcon({ type, color = 0, rot, art, size = 40 }: { type: string; color?: number; rot?: number; art?: string; size?: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const def = CATALOG[type];
   useEffect(() => {
@@ -27,8 +27,8 @@ export function ObjectIcon({ type, color = 0, rot, size = 40 }: { type: string; 
     const ox = ((tiles - def.w) * 32) / 2;
     const oy = ((tiles - def.h) * 32) / 2;
     for (let y = 0; y < tiles; y++) for (let x = 0; x < tiles; x++) drawFloor(ctx, 'wood', x, y);
-    drawObject(ctx, { type, x: 0, y: 0, color, rot: rot ?? def.rotations?.[0] ?? 0 }, ox, oy);
-  }, [type, color, rot, size, def]);
+    drawObject(ctx, { type, x: 0, y: 0, color, rot: rot ?? def.rotations?.[0] ?? 0, art }, ox, oy);
+  }, [type, color, rot, art, size, def]);
   return <canvas ref={ref} style={{ width: size, height: size, borderRadius: 6, flex: 'none' }} />;
 }
 

@@ -104,6 +104,8 @@ export class Engine {
   private lastFrame = 0;
   private syncTimer = 0;
   private cam = { x: 0, y: 0 };
+  /** Deslocamento da câmera em relação ao avatar (zoom no cursor); volta a zero quando ele anda. */
+  private camOffset = { x: 0, y: 0 };
   /** Centro da câmera livre do Mapmaker, em pixels do mundo. */
   private freeCam = { x: 0, y: 0 };
   private place: Place = { area: null, spotlight: false };
@@ -163,6 +165,36 @@ export class Engine {
 
   setZoom(z: number) {
     this.zoom = clamp(z, 0.4, 3);
+  }
+
+  /**
+   * Zoom mantendo fixo o ponto do mapa que está sob (sx, sy) — coordenadas na tela,
+   * relativas ao canvas. Sem ponto, usa o centro da tela (botões + e −).
+   */
+  zoomAt(factor: number, sx?: number, sy?: number) {
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
+    const mx = sx ?? w / 2;
+    const my = sy ?? h / 2;
+    const before = this.zoom;
+    const after = clamp(before * factor, 0.4, 3);
+    if (after === before) return;
+    // ponto do mundo sob o cursor, antes do zoom
+    const wx = this.cam.x + mx / before;
+    const wy = this.cam.y + my / before;
+    // canto da câmera que mantém esse ponto sob o cursor depois do zoom
+    const camX = wx - mx / after;
+    const camY = wy - my / after;
+    this.zoom = after;
+    if (this.mm) {
+      this.freeCam = { x: camX + w / after / 2, y: camY + h / after / 2 };
+    } else {
+      const me = this.world.self;
+      this.camOffset = {
+        x: camX - (me.rx * TILE + TILE / 2 - w / after / 2),
+        y: camY - (me.ry * TILE + TILE / 2 - h / after / 2),
+      };
+    }
   }
 
   /** Liga/desliga o Mapmaker. Ao ligar, a câmera livre começa onde o avatar está. */
@@ -332,10 +364,13 @@ export class Engine {
     this.onHoverTile?.(null);
   };
 
+  /** Rodinha do mouse (ou pinça no touchpad) dá zoom no ponto apontado pelo cursor. */
   private onWheel = (e: WheelEvent) => {
-    if (!e.ctrlKey && !this.mm) return;
     e.preventDefault();
-    this.setZoom(this.zoom * (e.deltaY < 0 ? 1.1 : 0.9));
+    const rect = this.canvas.getBoundingClientRect();
+    // deltaMode 1 = linhas (alguns mouses); normaliza para pixels
+    const delta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    this.zoomAt(Math.exp(-delta * 0.0015), e.clientX - rect.left, e.clientY - rect.top);
   };
 
   private frame = (now: number) => {
@@ -412,6 +447,13 @@ export class Engine {
         p.ry += (dy / dist) * speed;
       }
       p.walk += dt;
+    }
+    // Quando o avatar anda, a câmera volta aos poucos a segui-lo pelo centro.
+    const me = this.world.self;
+    if (me && (Math.abs(me.x - me.rx) > 0.01 || Math.abs(me.y - me.ry) > 0.01) && (this.camOffset.x || this.camOffset.y)) {
+      const k = Math.pow(0.9, dt / 16);
+      this.camOffset.x = Math.abs(this.camOffset.x * k) < 0.5 ? 0 : this.camOffset.x * k;
+      this.camOffset.y = Math.abs(this.camOffset.y * k) < 0.5 ? 0 : this.camOffset.y * k;
     }
   }
 
@@ -526,8 +568,11 @@ export class Engine {
     } else {
       const cx = me.rx * TILE + TILE / 2;
       const cy = me.ry * TILE + TILE / 2;
-      camX = mapW <= viewW ? (mapW - viewW) / 2 : clamp(cx - viewW / 2, 0, mapW - viewW);
-      camY = mapH <= viewH ? (mapH - viewH) / 2 : clamp(cy - viewH / 2, 0, mapH - viewH);
+      camX = mapW <= viewW ? (mapW - viewW) / 2 : clamp(cx - viewW / 2 + this.camOffset.x, 0, mapW - viewW);
+      camY = mapH <= viewH ? (mapH - viewH) / 2 : clamp(cy - viewH / 2 + this.camOffset.y, 0, mapH - viewH);
+      // Não acumula deslocamento além da borda do mapa.
+      this.camOffset.x = mapW <= viewW ? 0 : camX - (cx - viewW / 2);
+      this.camOffset.y = mapH <= viewH ? 0 : camY - (cy - viewH / 2);
     }
     const ox = Math.round(-camX * s);
     const oy = Math.round(-camY * s);

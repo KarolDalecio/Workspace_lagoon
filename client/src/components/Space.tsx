@@ -289,10 +289,10 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
         </div>
 
         <div className="tb-group">
-          <button className="icon" onClick={() => engineRef.current?.setZoom(engineRef.current.zoom / 1.2)} title="Diminuir zoom">
+          <button className="icon" onClick={() => engineRef.current?.zoomAt(1 / 1.2)} title="Diminuir zoom">
             <ZoomOut size={18} />
           </button>
-          <button className="icon" onClick={() => engineRef.current?.setZoom(engineRef.current.zoom * 1.2)} title="Aumentar zoom">
+          <button className="icon" onClick={() => engineRef.current?.zoomAt(1.2)} title="Aumentar zoom">
             <ZoomIn size={18} />
           </button>
           {myDesk && (

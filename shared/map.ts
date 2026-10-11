@@ -1,4 +1,4 @@
-import { CATALOG } from './catalog';
+import { ART_IDS, CATALOG } from './catalog';
 
 export const TILE = 32;
 
@@ -30,6 +30,8 @@ export interface PlacedObject {
   interaction?: Interaction;
   /** Texto de placas e letreiros. */
   label?: string;
+  /** Arte do quadro (id de ARTS). */
+  art?: string;
 }
 
 export interface Rect {
@@ -106,7 +108,7 @@ export interface SpaceMap {
   version?: number;
 }
 
-export const MAP_VERSION = 4;
+export const MAP_VERSION = 5;
 
 
 type Tiles<T> = { x: number; y: number; value: T }[];
@@ -379,11 +381,12 @@ class Builder {
     for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) this.room[effect][tileKey(xx, yy)] = 1;
   }
 
-  put(type: string, x: number, y: number, opts: { color?: number; rot?: number; interaction?: Interaction; label?: string } = {}) {
+  put(type: string, x: number, y: number, opts: { color?: number; rot?: number; interaction?: Interaction; label?: string; art?: string } = {}) {
     const def = CATALOG[type];
     const obj: PlacedObject = { id: `${this.prefix}-${(this.n++).toString(36)}`, type, x, y, color: opts.color ?? 0, rot: opts.rot ?? def.rotations?.[0] ?? 0 };
     if (opts.interaction) obj.interaction = opts.interaction;
     if (def.label !== undefined) obj.label = opts.label ?? def.label;
+    if (opts.art) obj.art = opts.art;
     this.room.objects.push(obj);
     if (def.blocks) this.flag('impassable', x, y, def.w, def.h);
     return obj;
@@ -432,6 +435,24 @@ function blankRoom(id: string, name: string) {
   b.wallV(23, 1, 14, 1);
   b.flag('spawn', 10, 7, 4, 2);
   return b.room;
+}
+
+/**
+ * Parede e mesa do Guilherme: mesa grande (x 56..61) com 5 monitores e a cafeteira,
+ * quadro branco centralizado acima dela e dois quadros de arte nas pontas.
+ */
+function guilhermeDesk(b: Builder) {
+  const swapWall = (type: string, x: number, opts: Parameters<Builder['put']>[3] = {}) => {
+    for (let i = 0; i < CATALOG[type].w; i++) b.open(x + i, 3);
+    return b.put(type, x, 3, opts);
+  };
+  swapWall('frame', 56, { art: 'anel' });
+  swapWall('whiteboard', 58, { interaction: { kind: 'embed', title: 'Quadro — Sala do Guilherme', url: '' } });
+  swapWall('frame', 61, { art: 'triforca' });
+  b.put('workstation5xl', 56, 4);
+  b.put('coffeemaker', 56, 4, {
+    interaction: { kind: 'note', title: 'Cafeteira BB-8', text: '☕ Cápsula pronta. Pausa para um café com o Hachi?' },
+  });
 }
 
 /**
@@ -502,7 +523,7 @@ function officeRoom(id: string, name: string, auditorium?: string) {
   b.floor(2, 4, 16, 17, 'darkwood');
   b.wallV(18, 4, 7, FACE);
   b.put('console', 18, 8);
-  swap('frame', 3, 3);
+  swap('frame', 3, 3, { art: 'cafe' });
   for (let x = 4; x <= 8; x++) swap('window', x, 3);
   b.put('plant', 10, 4);
   b.put('fridge', 12, 4);
@@ -636,11 +657,10 @@ function officeRoom(id: string, name: string, auditorium?: string) {
   b.area('Sala da Karol', 48, 4, 6, 9, false, OWNERS);
 
   // Sala do Guilherme: vitrola, quadros, setup de 5 monitores, Hachi, 3 luminárias e laguinho de pesca
-  for (const x of [56, 58, 60]) swap('frame', x, 3, { color: x === 58 ? 1 : 0 });
+  guilhermeDesk(b);
   b.put('turntable', 55, 4);
-  b.put('workstation5', 58, 4);
   b.put('chair', 59, 5, { rot: 2, color: 0 });
-  b.put('lamp', 61, 4);
+  b.put('lamp', 61, 7);
   b.put('lamp', 55, 7, { color: 1 });
   b.put('lamp', 55, 12);
   b.put('dogbed', 57, 9);
@@ -832,6 +852,7 @@ function cleanObject(room: Room, v: unknown): PlacedObject | null {
   const rot = def.rotations?.includes(o.rot) ? o.rot : (def.rotations?.[0] ?? 0);
   const obj: PlacedObject = { id: o.id, type: o.type, x: o.x, y: o.y, color, rot };
   if (def.label !== undefined) obj.label = typeof o.label === 'string' ? o.label.trim().slice(0, 24) : def.label;
+  if (def.art && typeof o.art === 'string' && ART_IDS.has(o.art)) obj.art = o.art;
   const interaction = o.interaction ? cleanInteraction(o.interaction) : null;
   if (interaction) obj.interaction = interaction;
   return obj;
@@ -1069,12 +1090,17 @@ function applyOne(map: SpaceMap, edit: MapEdit, depth: number): Applied | null {
         prevPatch.label = obj.label ?? '';
         patch.label = next.label;
       }
+      if (edit.patch.art !== undefined && next.art !== undefined) {
+        prevPatch.art = obj.art ?? 'paisagem';
+        patch.art = next.art;
+      }
       if (edit.patch.interaction !== undefined) {
         prevPatch.interaction = obj.interaction ?? null;
         patch.interaction = next.interaction ?? null;
       }
       Object.assign(obj, { x: next.x, y: next.y, color: next.color, rot: next.rot });
       if (next.label !== undefined) obj.label = next.label;
+      if (next.art !== undefined) obj.art = next.art;
       if (next.interaction) obj.interaction = next.interaction;
       else delete obj.interaction;
       return { op: { kind: 'obj-update', room: roomId, id: obj.id, patch }, inverse: { kind: 'obj-update', room: roomId, id: obj.id, patch: prevPatch } };
@@ -1138,6 +1164,26 @@ export function migrateMap(map: SpaceMap): boolean {
     for (const room of Object.values(map.rooms))
       for (const o of room.objects)
         if (o.type === 'wall' && o.color === 5 && o.x >= 22 && o.x <= 27 && o.y >= 5 && o.y <= 10 && room.areaMeta['Foco 1']) o.color = 0;
+  }
+  if (from < 5) {
+    // v5: mesa grande do Guilherme com cafeteira, quadro branco centralizado e quadros com arte.
+    for (const room of Object.values(map.rooms)) {
+      if (!room.areaMeta['Sala do Guilherme']) continue;
+      const old = room.objects.find(o => o.type === 'workstation5' && o.x === 58 && o.y === 4);
+      if (!old) continue;
+      const lamp = room.objects.find(o => o.type === 'lamp' && o.x === 61 && o.y === 4);
+      if (lamp) {
+        lamp.y = 7;
+        room.impassable[tileKey(61, 7)] = 1;
+      }
+      // tira os quadros antigos da parede de cima (eles voltam como paredes antes de recolocar)
+      room.objects = room.objects.filter(o => !(o === old || (o.type === 'frame' && o.y === 3 && o.x >= 56 && o.x <= 61)));
+      const b = Builder.wrap(room, `${room.id}-v5`);
+      for (const x of [56, 58, 60]) b.put('wall', x, 3, { color: 4 });
+      guilhermeDesk(b);
+    }
+    for (const room of Object.values(map.rooms))
+      for (const o of room.objects) if (o.type === 'frame' && o.x === 3 && o.y === 3 && !o.art) o.art = 'cafe';
   }
   map.version = MAP_VERSION;
   return true;

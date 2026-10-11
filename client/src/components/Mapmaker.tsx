@@ -21,7 +21,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { CATALOG } from '../../../shared/catalog';
+import { ARTS, CATALOG } from '../../../shared/catalog';
 import {
   FLAG_EFFECTS,
   FLOORS,
@@ -985,10 +985,10 @@ export function Mapmaker({ world, engine, onClose, onToast }: { world: World; en
           <BoxSelect size={18} />
         </ToolButton>
         <hr />
-        <ToolButton title="Aproximar" onClick={() => engine?.setZoom(engine.zoom * 1.2)}>
+        <ToolButton title="Aproximar" onClick={() => engine?.zoomAt(1.2)}>
           <ZoomIn size={18} />
         </ToolButton>
-        <ToolButton title="Afastar" onClick={() => engine?.setZoom(engine.zoom / 1.2)}>
+        <ToolButton title="Afastar" onClick={() => engine?.zoomAt(1 / 1.2)}>
           <ZoomOut size={18} />
         </ToolButton>
         <ToolButton title="Desfazer (Ctrl+Z)" onClick={() => world.undo()} disabled={!world.canUndo}>
@@ -1513,6 +1513,24 @@ function ObjectDetails({
           )}
         </div>
       </div>
+      {def.art && (
+        <div className="art-picker">
+          <span className="hint">Arte do quadro</span>
+          <div className="art-grid">
+            {ARTS.map(a => (
+              <button
+                key={a.id}
+                className={(obj.art ?? 'paisagem') === a.id ? 'active' : ''}
+                title={`${a.name} · ${a.theme}`}
+                onClick={() => onUpdate({ art: a.id })}
+              >
+                <ObjectIcon type="frame" color={obj.color} art={a.id} size={44} />
+                <small>{a.name}</small>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {def.label !== undefined && (
         <label className="field">
           Texto da placa

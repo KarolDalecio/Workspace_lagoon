@@ -118,6 +118,7 @@ async function getSpace(id: string): Promise<Space> {
         const space: Space = { players: new Map(), chat: saved?.chat.slice(-CHAT_HISTORY) ?? [], map: restoreMap(saved?.map) };
         spaces.set(id, space);
         if (migrateMap(space.map) && saved) {
+          Object.values(space.map.rooms).forEach(fillWhiteboards);
           console.log(`Espaço "${id}" migrado para a versão ${space.map.version}`);
           scheduleSave(id, space);
         }

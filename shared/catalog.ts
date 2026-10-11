@@ -18,6 +18,8 @@ export interface ObjectDef {
   defaultInteraction?: 'whiteboard';
   /** Objeto com texto editável (placas). Valor é o texto padrão ao colocar. */
   label?: string;
+  /** Quadro que mostra uma das artes de ARTS (escolhida no Mapmaker). */
+  art?: boolean;
   keywords?: string;
 }
 
@@ -34,6 +36,21 @@ const SEATS = ['#3d4466', '#5b6ee1', '#e15b64', '#2fb380', '#f0a73a', '#8c5bd6',
 const WOODS = ['#9b6a3c', '#e8dcc4', '#5a5f73', '#f2f2f2'];
 const FABRIC = ['#5b6ee1', '#6c4fa3', '#2fb380', '#e15b64', '#4a4a4a', '#f0a73a'];
 
+/** Artes em pixel dos quadros (o desenho fica em client/src/game/art.ts). Inspiradas nos temas, não cópias. */
+export const ARTS: { id: string; name: string; theme: string }[] = [
+  { id: 'paisagem', name: 'Paisagem', theme: 'Clássico' },
+  { id: 'cafe', name: 'Xícara de café', theme: 'Café' },
+  { id: 'graos', name: 'Grãos de café', theme: 'Café' },
+  { id: 'droide', name: 'Droide-bola', theme: 'Guerra nas estrelas' },
+  { id: 'sabre', name: 'Sabre de luz', theme: 'Guerra nas estrelas' },
+  { id: 'anel', name: 'Anel dourado', theme: 'Terra média' },
+  { id: 'triforca', name: 'Três triângulos', theme: 'Lenda do herói' },
+  { id: 'd20', name: 'Dado de 20 faces', theme: 'RPG de mesa' },
+  { id: 'castelo', name: 'Castelo de magia', theme: 'Escola de bruxaria' },
+  { id: 'trevo', name: 'Grimório do trevo', theme: 'Trevo negro' },
+];
+export const ART_IDS = new Set(ARTS.map(a => a.id));
+
 export const CATALOG: Record<string, ObjectDef> = {
   desk: { name: 'Mesa de trabalho', category: 'escritorio', w: 2, h: 1, colors: WOODS, blocks: true, keywords: 'computador monitor' },
   chair: { name: 'Cadeira', category: 'escritorio', w: 1, h: 1, colors: SEATS, rotations: [0, 1, 2, 3], blocks: false, keywords: 'assento' },
@@ -42,6 +59,8 @@ export const CATALOG: Record<string, ObjectDef> = {
   smalldesk: { name: 'Mesa de foco', category: 'escritorio', w: 1, h: 1, colors: ['#3a3f4f', '#9b6a3c'], blocks: true, keywords: 'cabine monitor' },
   conftable: { name: 'Mesa de conferência com telão', category: 'escritorio', w: 5, h: 4, colors: ['#7d8597', '#5a5f73'], blocks: true, keywords: 'reunião tela' },
   workstation3: { name: 'PC com 3 monitores', category: 'escritorio', w: 3, h: 1, colors: ['#3a3f4f', '#9b6a3c', '#f2f2f2'], blocks: true, keywords: 'computador setup monitor vertical gamer' },
+  workstation5xl: { name: 'Mesa grande com 5 monitores', category: 'escritorio', w: 6, h: 1, colors: ['#3a3f4f', '#9b6a3c', '#f2f2f2'], blocks: true, keywords: 'computador setup monitores mesa grande' },
+  coffeemaker: { name: 'Cafeteira de cápsula', category: 'moveis', w: 1, h: 1, colors: ['#1f1f24', '#c0392b', '#f2f2f2'], blocks: false, keywords: 'café cápsula espresso bb-8' },
   workstation5: { name: 'PC com 5 monitores', category: 'escritorio', w: 3, h: 1, colors: ['#3a3f4f', '#9b6a3c', '#f2f2f2'], blocks: true, keywords: 'computador setup monitores trader' },
   doorsign: { name: 'Placa de porta', category: 'escritorio', w: 1, h: 1, colors: ['#2a2e45', '#c99a62', '#2fb380'], blocks: true, label: 'SALA', keywords: 'texto nome cargo' },
   locker: { name: 'Armário', category: 'escritorio', w: 1, h: 1, colors: ['#8a93a6', '#5b6ee1', '#5a5f73'], blocks: true, keywords: 'escaninho' },
@@ -83,7 +102,7 @@ export const CATALOG: Record<string, ObjectDef> = {
   dog: { name: 'Cachorro', category: 'decoracao', w: 1, h: 1, colors: ['#d9a066', '#f2f2f2', '#3a3f4f', '#1c1c22'], blocks: true, label: 'Doguinho', keywords: 'pet animal akita pastor tricolor' },
   dogbed: { name: 'Caminha de pet', category: 'decoracao', w: 1, h: 1, colors: ['#5b6ee1', '#e15b64', '#2fb380', '#8a5a3c'], blocks: false, keywords: 'cachorro gato cama almofada' },
   fishingrod: { name: 'Vara de pesca', category: 'natureza', w: 1, h: 1, colors: ['#6b4423'], blocks: false, keywords: 'pescaria lago' },
-  frame: { name: 'Quadro decorativo', category: 'decoracao', w: 1, h: 1, colors: ['#c99a62', '#3a3f4f'], blocks: true, keywords: 'pintura arte' },
+  frame: { name: 'Quadro decorativo', category: 'decoracao', w: 1, h: 1, colors: ['#c99a62', '#3a3f4f', '#f2f2f2'], blocks: true, art: true, keywords: 'pintura arte pixel' },
   barrel: { name: 'Barril', category: 'decoracao', w: 1, h: 1, colors: ['#5a5f73', '#c0392b'], blocks: true },
   arcade: { name: 'Fliperama', category: 'decoracao', w: 1, h: 1, colors: ['#8c5bd6', '#e15b64', '#3fb6d6'], blocks: true, keywords: 'jogo videogame' },
   scooter: { name: 'Patinete', category: 'decoracao', w: 1, h: 1, colors: ['#e15b64', '#3a3f4f'], blocks: false, keywords: 'estacionamento' },

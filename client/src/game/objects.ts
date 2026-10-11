@@ -1,5 +1,6 @@
 import { CATALOG } from '../../../shared/catalog';
 import type { PlacedObject } from '../../../shared/map';
+import { drawArt } from './art';
 
 const T = 32;
 type Ctx = CanvasRenderingContext2D;
@@ -43,7 +44,7 @@ function seat(ctx: Ctx, px: number, py: number, color: string, rot: number, size
   if (rot === 3) rrect(ctx, px + pad - 2, py + pad, back, size, 4, dark);
 }
 
-type Draw = (ctx: Ctx, px: number, py: number, color: string, rot: number, o: Pick<PlacedObject, 'x' | 'y' | 'label'>) => void;
+type Draw = (ctx: Ctx, px: number, py: number, color: string, rot: number, o: Pick<PlacedObject, 'x' | 'y' | 'label' | 'art'>) => void;
 
 function text(ctx: Ctx, label: string, cx: number, cy: number, maxW: number, color: string, size = 9) {
   ctx.save();
@@ -102,6 +103,80 @@ const DRAW: Record<string, Draw> = {
     circle(ctx, px + 8, py + 9, 1.4, '#4fc3ff');
     rrect(ctx, px + 30, py + 19, 28, 5, 1, '#3a3f4f');
     rrect(ctx, px + 62, py + 19, 6, 6, 3, '#3a3f4f');
+  },
+  workstation5xl(ctx, px, py, c) {
+    shadow(ctx, px + 96, py + 30, 94, 3);
+    rrect(ctx, px + 1, py + 10, 190, 19, 3, c);
+    ctx.fillStyle = shade(c, -0.25);
+    ctx.fillRect(px + 1, py + 25, 190, 4);
+    const screens = ['#5fb3f5', '#7ad19a', '#f0a73a', '#e15b64', '#8c5bd6'];
+    // 5 monitores centralizados na mesa (3 embaixo, 2 em cima); a ponta esquerda fica livre para a cafeteira
+    [56, 84, 112].forEach((mx, i) => {
+      rrect(ctx, px + mx, py + 5, 26, 13, 2, '#15171f');
+      ctx.fillStyle = screens[i];
+      ctx.fillRect(px + mx + 2, py + 7, 22, 9);
+    });
+    [70, 98].forEach((mx, i) => {
+      rrect(ctx, px + mx, py - 8, 26, 13, 2, '#15171f');
+      ctx.fillStyle = screens[i + 3];
+      ctx.fillRect(px + mx + 2, py - 6, 22, 9);
+    });
+    rrect(ctx, px + 80, py + 20, 34, 5, 1, '#3a3f4f');
+    rrect(ctx, px + 118, py + 20, 6, 6, 3, '#3a3f4f');
+    // caixas de som e torre do PC na ponta direita
+    rrect(ctx, px + 146, py + 6, 8, 12, 2, '#23262f');
+    circle(ctx, px + 150, py + 13, 2, '#5a5f73');
+    rrect(ctx, px + 164, py - 2, 18, 24, 3, '#23262f');
+    ctx.fillStyle = '#8c5bd6';
+    ctx.fillRect(px + 167, py + 2, 2, 16);
+    circle(ctx, px + 176, py + 4, 1.5, '#4fc3ff');
+  },
+  /** Cafeteira de cápsula preta com decalque de droide-bola (laranja e branco) e xícara. */
+  coffeemaker(ctx, px, py, c) {
+    // base e bandeja
+    rrect(ctx, px + 4, py + 22, 24, 5, 2, shade(c, 0.25));
+    // corpo
+    ctx.fillStyle = c;
+    ctx.beginPath();
+    ctx.moveTo(px + 6, py + 23);
+    ctx.lineTo(px + 6, py - 2);
+    ctx.quadraticCurveTo(px + 7, py - 8, px + 14, py - 8);
+    ctx.lineTo(px + 24, py - 6);
+    ctx.lineTo(px + 24, py + 8);
+    ctx.lineTo(px + 17, py + 8);
+    ctx.lineTo(px + 17, py + 23);
+    ctx.closePath();
+    ctx.fill();
+    // tampa prateada
+    ctx.fillStyle = '#c9ced8';
+    ctx.beginPath();
+    ctx.ellipse(px + 17, py - 7, 9, 3, -0.08, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#23262f';
+    ctx.beginPath();
+    ctx.ellipse(px + 17, py - 7.4, 6.5, 1.8, -0.08, 0, Math.PI * 2);
+    ctx.fill();
+    // decalque do droide-bola
+    circle(ctx, px + 11, py + 13, 5, '#f4f1ea');
+    ctx.strokeStyle = '#e8742a';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(px + 11, py + 13, 3, 0, Math.PI * 2);
+    ctx.stroke();
+    circle(ctx, px + 11, py + 6.2, 2.6, '#f4f1ea');
+    ctx.fillStyle = '#e8742a';
+    ctx.fillRect(px + 8.6, py + 6.4, 4.8, 0.9);
+    circle(ctx, px + 11.4, py + 5.6, 0.7, '#1d1d28');
+    // xícara de vidro com café
+    rrect(ctx, px + 18, py + 13, 9, 9, 2, 'rgba(230,240,250,0.55)');
+    rrect(ctx, px + 19, py + 15, 7, 6, 1.5, '#7a4a2a');
+    ctx.fillStyle = '#c8955c';
+    ctx.fillRect(px + 19, py + 15, 7, 1.4);
+    ctx.strokeStyle = 'rgba(230,240,250,0.8)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(px + 28, py + 17.5, 2, -Math.PI / 2, Math.PI / 2);
+    ctx.stroke();
   },
   workstation5(ctx, px, py, c) {
     shadow(ctx, px + 48, py + 30, 46, 3);
@@ -595,8 +670,11 @@ const DRAW: Record<string, Draw> = {
     ctx.stroke();
     circle(ctx, px + 40, py + 21, 1.8, '#e15b64');
   },
-  frame(ctx, px, py, c) {
-    rrect(ctx, px + 3, py + 4, 26, 20, 2, c);
+  frame(ctx, px, py, c, _rot, o) {
+    rrect(ctx, px + 3, py + 3, 26, 21, 2, c);
+    ctx.fillStyle = shade(c, -0.3);
+    ctx.fillRect(px + 5, py + 5, 22, 17);
+    if (drawArt(ctx, o.art, px + 6, py + 6, 20, 15)) return;
     ctx.fillStyle = '#8fc6e8';
     ctx.fillRect(px + 6, py + 7, 20, 14);
     ctx.fillStyle = '#4f8f3c';
@@ -745,7 +823,7 @@ const DRAW: Record<string, Draw> = {
 };
 
 /** Desenha um objeto do catálogo com o canto superior esquerdo em (px, py). */
-export function drawObject(ctx: Ctx, o: Pick<PlacedObject, 'type' | 'x' | 'y' | 'color' | 'rot'>, px = o.x * T, py = o.y * T) {
+export function drawObject(ctx: Ctx, o: Pick<PlacedObject, 'type' | 'x' | 'y' | 'color' | 'rot' | 'label' | 'art'>, px = o.x * T, py = o.y * T) {
   const def = CATALOG[o.type];
   const draw = DRAW[o.type];
   if (!def || !draw) return;

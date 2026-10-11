@@ -708,3 +708,37 @@
   min-width: 0;
   flex: 1;
 }
+
+.art-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.art-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(62px, 1fr));
+  gap: 6px;
+}
+
+.art-grid button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 9px;
+  border: 2px solid transparent;
+  background: var(--bg);
+}
+
+.art-grid button.active {
+  border-color: #ffd65a;
+}
+
+.art-grid small {
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.2;
+}

@@ -277,17 +277,28 @@ function clientKey() {
   }
 }
 
-export function joinSpace(partial: Omit<JoinRequest, 'clientKey'>): Promise<World> {
+/** Erro de conexão por falta de login (o App volta para a tela de login). */
+export class UnauthorizedError extends Error {}
+
+export function joinSpace(partial: Omit<JoinRequest, 'clientKey'>, token?: string): Promise<World> {
   const req: JoinRequest = { ...partial, clientKey: clientKey() };
   return new Promise((resolve, reject) => {
-    const socket: AppSocket = io({ reconnection: false, path: apiPath('socket.io') });
+    const socket: AppSocket = io({ reconnection: false, path: apiPath('socket.io'), auth: token ? { token } : {} });
     const fail = (msg: string) => {
       clearTimeout(timer);
       socket.disconnect();
       reject(new Error(msg));
     };
     const timer = setTimeout(() => fail('Tempo esgotado ao conectar ao servidor.'), 8000);
-    socket.once('connect_error', () => fail('Não foi possível conectar ao servidor.'));
+    socket.once('connect_error', err => {
+      if (err.message === 'unauthorized' || err.message === 'auth-misconfigured') {
+        clearTimeout(timer);
+        socket.disconnect();
+        reject(new UnauthorizedError(err.message === 'unauthorized' ? 'Sua sessão expirou ou não tem acesso. Entre de novo.' : 'O login não está configurado no servidor.'));
+        return;
+      }
+      fail('Não foi possível conectar ao servidor.');
+    });
     socket.once('connect', () => {
       socket.emit('join', req, res => {
         clearTimeout(timer);

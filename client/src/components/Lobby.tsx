@@ -2,7 +2,8 @@ import { Mic, MicOff, Video, VideoOff } from 'lucide-react';
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import { AVATAR_OPTIONS, type Avatar } from '../../../shared/types';
 import { LocalMedia } from '../rtc/media';
-import { joinSpace, type World } from '../world';
+import { accessToken, type AuthUser } from '../auth';
+import { UnauthorizedError, joinSpace, type World } from '../world';
 import { AvatarPreview } from './AvatarPreview';
 import { DeviceSettings } from './DeviceSettings';
 
@@ -47,11 +48,22 @@ function Swatches({ colors, value, onChange }: { colors: string[]; value: string
   );
 }
 
-export function Lobby({ onJoined }: { onJoined: (world: World, media: LocalMedia) => void }) {
+export function Lobby({
+  onJoined,
+  user,
+  onLogout,
+  onUnauthorized,
+}: {
+  onJoined: (world: World, media: LocalMedia) => void;
+  /** Conta logada (null quando o login está desligado, em desenvolvimento). */
+  user?: AuthUser | null;
+  onLogout?: () => void;
+  onUnauthorized?: (message: string) => void;
+}) {
   const [media] = useState(() => new LocalMedia());
   useSyncExternalStore(media.subscribe, media.getVersion);
   const [profile] = useState(loadProfile);
-  const [name, setName] = useState(profile.name);
+  const [name, setName] = useState(user?.person ?? profile.name);
   const [avatar, setAvatar] = useState<Avatar>(profile.avatar);
   const [space, setSpace] = useState(() => new URLSearchParams(location.search).get('space') ?? 'principal');
   const [joining, setJoining] = useState(false);
@@ -80,12 +92,16 @@ export function Lobby({ onJoined }: { onJoined: (world: World, media: LocalMedia
       // ignora
     }
     try {
-      const world = await joinSpace({ space, name: trimmed, avatar, audio: media.audioOn, video: media.videoOn });
+      const world = await joinSpace({ space, name: trimmed, avatar, audio: media.audioOn, video: media.videoOn }, await accessToken());
       const url = new URL(location.href);
       url.searchParams.set('space', world.space);
       history.replaceState(null, '', url);
       onJoined(world, media);
     } catch (err) {
+      if (err instanceof UnauthorizedError && onUnauthorized) {
+        onUnauthorized(err.message);
+        return;
+      }
       setError((err as Error).message);
       setJoining(false);
     }
@@ -132,9 +148,22 @@ export function Lobby({ onJoined }: { onJoined: (world: World, media: LocalMedia
           </div>
 
           <div className="lobby-form">
-            <label>
+            {user && (
+              <div className="account">
+                <span>
+                  Entrando como <strong>{user.person}</strong>
+                  <small>{user.email}</small>
+                </span>
+                {onLogout && (
+                  <button type="button" className="chip" onClick={onLogout}>
+                    Sair da conta
+                  </button>
+                )}
+              </div>
+            )}
+            <label hidden={!!user}>
               Seu nome
-              <input value={name} onChange={e => setName(e.target.value)} maxLength={24} placeholder="Como te chamam?" autoFocus />
+              <input value={name} onChange={e => setName(e.target.value)} maxLength={24} placeholder="Como te chamam?" autoFocus={!user} />
             </label>
             <label>
               Espaço

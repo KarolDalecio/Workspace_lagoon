@@ -171,7 +171,7 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
         {!mapmaker && <div className="room-pill">{roomName}</div>}
         {showHelp && !mapmaker && (
           <div className="help" onClick={() => setShowHelp(false)}>
-            Ande com <kbd>WASD</kbd>/<kbd>setas</kbd> ou clique no mapa · Chegue perto de alguém para conversar · <kbd>1</kbd>–
+            Ande com <kbd>WASD</kbd>/<kbd>setas</kbd> ou <strong>clique duplo</strong> · arraste para mover a vista · rodinha dá zoom · Chegue perto de alguém para conversar · <kbd>1</kbd>–
             <kbd>5</kbd> emotes · <kbd>X</kbd> interagir · <kbd>Alt</kbd>+<kbd>F</kbd> fumar
           </div>
         )}

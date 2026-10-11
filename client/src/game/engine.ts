@@ -114,7 +114,8 @@ export class Engine {
   private focusKey = '';
   private hover: Point | null = null;
   private dragging = false;
-  private panning: { x: number; y: number; cx: number; cy: number } | null = null;
+  /** Arraste da câmera: no espaço move o deslocamento em relação ao avatar; no Mapmaker, a câmera livre. */
+  private panning: { x: number; y: number; cx: number; cy: number; free: boolean } | null = null;
   private spaceHeld = false;
   private staticMap = document.createElement('canvas');
   private staticKey = '';
@@ -137,6 +138,7 @@ export class Engine {
     window.addEventListener('mouseup', this.onMouseUp);
     window.addEventListener('mousemove', this.onWindowMouseMove);
     this.canvas.addEventListener('mousedown', this.onMouseDown);
+    this.canvas.addEventListener('dblclick', this.onDoubleClick);
     this.canvas.addEventListener('mousemove', this.onMouseMove);
     this.canvas.addEventListener('mouseleave', this.onMouseLeave);
     this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
@@ -155,6 +157,7 @@ export class Engine {
     window.removeEventListener('mouseup', this.onMouseUp);
     window.removeEventListener('mousemove', this.onWindowMouseMove);
     this.canvas.removeEventListener('mousedown', this.onMouseDown);
+    this.canvas.removeEventListener('dblclick', this.onDoubleClick);
     this.canvas.removeEventListener('mousemove', this.onMouseMove);
     this.canvas.removeEventListener('mouseleave', this.onMouseLeave);
     this.canvas.removeEventListener('wheel', this.onWheel);
@@ -207,6 +210,8 @@ export class Engine {
       this.target = null;
     }
     this.mm = view;
+    // No espaço o canvas mostra a mãozinha (arrastar); no Mapmaker, a mira das ferramentas.
+    this.canvas.style.cursor = view ? (view.pan ? 'grab' : 'crosshair') : '';
   }
 
   /** Centraliza a câmera livre num tile (lista de objetos, troca de sala). */
@@ -323,7 +328,7 @@ export class Engine {
       e.preventDefault();
       // Mão, botão do meio ou espaço+arrastar movem a câmera.
       if (this.mm.pan || e.button === 1 || this.spaceHeld) {
-        this.panning = { x: e.clientX, y: e.clientY, cx: this.freeCam.x, cy: this.freeCam.y };
+        this.panning = { x: e.clientX, y: e.clientY, cx: this.freeCam.x, cy: this.freeCam.y, free: true };
         return;
       }
       if (e.button !== 0) return;
@@ -331,13 +336,26 @@ export class Engine {
       this.onEditPointer?.({ tile, phase: 'down', ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey });
       return;
     }
-    if (e.button === 0) this.goTo(tile.x, tile.y);
+    // No espaço: arrastar move a câmera; andar até um ponto é com clique duplo.
+    if (e.button === 0 || e.button === 1) {
+      e.preventDefault();
+      this.panning = { x: e.clientX, y: e.clientY, cx: this.camOffset.x, cy: this.camOffset.y, free: false };
+      this.canvas.style.cursor = 'grabbing';
+    }
+  };
+
+  private onDoubleClick = (e: MouseEvent) => {
+    if (this.mm || e.button !== 0) return;
+    const tile = this.tileAt(e);
+    this.goTo(tile.x, tile.y);
   };
 
   private onWindowMouseMove = (e: MouseEvent) => {
     if (!this.panning) return;
-    this.freeCam.x = this.panning.cx - (e.clientX - this.panning.x) / this.zoom;
-    this.freeCam.y = this.panning.cy - (e.clientY - this.panning.y) / this.zoom;
+    const dx = (e.clientX - this.panning.x) / this.zoom;
+    const dy = (e.clientY - this.panning.y) / this.zoom;
+    if (this.panning.free) this.freeCam = { x: this.panning.cx - dx, y: this.panning.cy - dy };
+    else this.camOffset = { x: this.panning.cx - dx, y: this.panning.cy - dy };
   };
 
   private onMouseMove = (e: MouseEvent) => {
@@ -351,6 +369,7 @@ export class Engine {
 
   private onMouseUp = (e: MouseEvent) => {
     if (this.panning) {
+      this.canvas.style.cursor = this.mm ? (this.mm.pan ? 'grab' : 'crosshair') : '';
       this.panning = null;
       return;
     }

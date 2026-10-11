@@ -26,6 +26,7 @@ import {
   type SpaceMap,
 } from '../shared/map';
 import { canHear } from '../shared/proximity';
+import { authMode, bearer, publicAuthConfig, verifyToken, type AuthUser } from './auth';
 import { createStore } from './store';
 import {
   AVATAR_OPTIONS,
@@ -159,6 +160,11 @@ function ownerTagFor(clientKey: unknown) {
   return createHash('sha256').update(key).digest('base64url').slice(0, 16);
 }
 
+/** Com login, a identidade é a pessoa (as várias contas dela compartilham salas e mesa). */
+function personTag(person: string) {
+  return createHash('sha256').update(`person:${person.trim().toLowerCase()}`).digest('base64url').slice(0, 16);
+}
+
 /** Tile livre de Entrada na sala; sem Entrada, qualquer tile caminhável. Nunca dentro de área trancada. */
 function findSpawn(space: Space, roomId: string) {
   const room = space.map.rooms[roomId];
@@ -187,7 +193,37 @@ function keepWhiteboards(from: SpaceMap, to: SpaceMap) {
 
 const app = express();
 const server = createServer(app);
-const io = new Server<ClientToServer, ServerToClient>(server, { cors: { origin: true }, maxHttpBufferSize: 5e6 });
+const io = new Server<ClientToServer, ServerToClient, Record<string, never>, { user?: AuthUser }>(server, {
+  cors: { origin: true },
+  maxHttpBufferSize: 5e6,
+});
+
+/** Só entra no espaço quem tem login válido e está na lista (quando o login está ativo). */
+io.use(async (socket, next) => {
+  if (authMode === 'disabled') return next();
+  if (authMode === 'misconfigured') return next(new Error('auth-misconfigured'));
+  const user = await verifyToken(socket.handshake.auth?.token);
+  if (!user) return next(new Error('unauthorized'));
+  socket.data.user = user;
+  next();
+});
+
+app.get('/api/config', (_req, res) => {
+  res.json(publicAuthConfig());
+});
+
+app.get('/api/me', async (req, res) => {
+  if (authMode === 'disabled') {
+    res.json({ auth: 'disabled' });
+    return;
+  }
+  const user = await verifyToken(bearer(req.headers.authorization));
+  if (!user) {
+    res.status(401).json({ error: 'Acesso não autorizado para este e-mail.' });
+    return;
+  }
+  res.json(user);
+});
 
 const dist = path.join(ROOT, 'dist');
 app.get('/health', (_req, res) => {
@@ -196,6 +232,10 @@ app.get('/health', (_req, res) => {
 
 /** Envio de imagens (fundo/primeiro plano das salas e interações de imagem), até 3 MB. */
 app.post('/api/upload', express.raw({ type: Object.keys(IMAGE_TYPES), limit: '3mb' }), async (req, res) => {
+  if (authMode !== 'disabled' && !(await verifyToken(bearer(req.headers.authorization)))) {
+    res.status(401).json({ error: 'Faça login para enviar imagens.' });
+    return;
+  }
   const ext = IMAGE_TYPES[String(req.headers['content-type'])];
   if (!ext || !Buffer.isBuffer(req.body) || !req.body.length) {
     res.status(400).json({ error: 'Envie uma imagem PNG, JPG, GIF ou WEBP de até 3 MB.' });
@@ -283,12 +323,14 @@ io.on('connection', socket => {
     }
     if (spaceId || !socket.connected) return;
     spaceId = id;
-    ownerTag = ownerTagFor(req?.clientKey);
+    const user = socket.data.user;
+    ownerTag = user ? personTag(user.person) : ownerTagFor(req?.clientKey);
     const room = space.map.entry;
     const pos = findSpawn(space, room);
     const player: PlayerState = {
       id: socket.id,
-      name: cleanText(req?.name, 24) || 'Convidado',
+      // Com login, o nome é o da pessoa da conta (é ele que vale nas salas trancadas).
+      name: user ? user.person : cleanText(req?.name, 24) || 'Convidado',
       avatar: cleanAvatar(req?.avatar),
       room,
       tag: ownerTag,

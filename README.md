@@ -5,7 +5,8 @@ Plataforma de escritório virtual no estilo Gather: um mapa 2D onde cada pessoa 
 ## Funcionalidades
 
 - **Mapa 2D** em canvas: escritório com salas de reunião, cabines de foco, biblioteca, cozinha, lounge, recepção e jardim
-- **Movimento** com WASD/setas ou clicando no mapa (pathfinding BFS)
+- **Login** (Supabase Auth) restrito a uma lista de e-mails, validado no servidor a cada conexão
+- **Movimento** com WASD/setas ou clique duplo no mapa (pathfinding BFS); arrastar move a câmera e a rodinha dá zoom no cursor
 - **Multiplayer em tempo real** via Socket.IO, com validação de movimento no servidor
 - **Vídeo e áudio por proximidade** (WebRTC P2P): conecta a até 3 tiles de distância, com volume que diminui conforme a distância
 - **Áreas privadas**: dentro de uma sala de reunião/cabine, só quem está na mesma área se ouve
@@ -49,6 +50,11 @@ npm start          # porta $PORT (padrão 3001)
 | `PORT` | Porta do servidor (no Docker: 8080) |
 | `DATABASE_URL` | Postgres para mapas, chat e imagens enviadas (também aceita `POSTGRES_URL`, `POSTGRESQL_URL` ou as variáveis `PGHOST`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`). **Sem ela, salva dentro do container e tudo se perde no próximo deploy** |
 | `BASE_PATH` | **No build.** Prefixo público quando o app fica num subcaminho (ex.: `/workspace/`) |
+| `SUPABASE_URL` | URL do projeto Supabase usado para o login (ex.: `https://<id>.supabase.co`) |
+| `SUPABASE_ANON_KEY` | Chave **anon / publishable** do Supabase (pública). **Nunca** a service role — o app recusa |
+| `ALLOWED_USERS` | Quem pode entrar: `email=Pessoa,email2=Pessoa`. Vários e-mails da mesma pessoa compartilham salas trancadas e mesa |
+
+**Em produção, sem `SUPABASE_URL` + `SUPABASE_ANON_KEY` + `ALLOWED_USERS` o app fica fechado** (nunca abre sem login). Localmente (`npm run dev`) o login fica desligado.
 
 As tabelas (`spaces` e `uploads`) são criadas sozinhas na primeira inicialização.
 
@@ -58,8 +64,9 @@ As tabelas (`spaces` e `uploads`) são criadas sozinhas na primeira inicializaç
 2. **App → Environment:** adicione `DATABASE_URL=<a URL interna do passo 1>`.
 3. **App → General → Build Type:** *Dockerfile*, com Docker File `Dockerfile` e Context Path `.` (os padrões). O Dockerfile já usa `BASE_PATH=/workspace/`; para outro caminho, defina o build arg `BASE_PATH`.
 4. **App → Domains:** Host `gprgai.top`, Path `/workspace`, Internal Path `/`, **Strip Path ligado**, Container Port `8080`, HTTPS com Let's Encrypt.
-5. Faça o deploy e abra https://gprgai.top/workspace.
-6. **Confira o banco:** https://gprgai.top/workspace/health precisa mostrar `"storage":"postgres","persistent":true`. Se mostrar `"arquivos"`, a variável não chegou ao app — revise o passo 2 e faça o deploy de novo (o log do app também mostra um aviso ⚠️).
+5. **Login:** em *Environment*, adicione também `SUPABASE_URL`, `SUPABASE_ANON_KEY` e `ALLOWED_USERS` (tabela acima). No Supabase, crie as contas em *Authentication → Users → Add user → Create new user* (marque *Auto Confirm User*) e desligue o cadastro público em *Authentication → Sign In / Providers → Allow new users to sign up*.
+6. Faça o deploy e abra https://gprgai.top/workspace.
+7. **Confira o banco:** https://gprgai.top/workspace/health precisa mostrar `"storage":"postgres","persistent":true`. Se mostrar `"arquivos"`, a variável não chegou ao app — revise o passo 2 e faça o deploy de novo (o log do app também mostra um aviso ⚠️).
 
 **Backup:** no Mapmaker, menu ☰ → *Baixar mapa (.json)* guarda uma cópia do espaço; *Importar mapa (.json)* restaura (só quem tem acesso às áreas trancadas pode importar).
 
@@ -79,6 +86,5 @@ client/src/
 ## Próximos passos
 
 - SFU (LiveKit/mediasoup) para conversas com muitas pessoas (a malha P2P funciona bem até ~6–8)
-- Autenticação (hoje a identidade é o navegador)
 - Permissões de edição (hoje qualquer pessoa no espaço pode editar o mapa) e tamanho de mapa configurável
 - Indicador de quem está falando, status (ocupado/ausente), mensagens diretas

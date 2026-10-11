@@ -50,6 +50,7 @@ import { drawFloor } from '../game/mapRenderer';
 import type { Point } from '../game/path';
 import type { World } from '../world';
 import { ObjectIcon, ObjectPicker, rotateStamp, type StampItem } from './ObjectPicker';
+import { authHeaders } from '../auth';
 import { apiPath, assetUrl } from '../base';
 
 type Mode = 'objects' | 'effects' | 'floor';
@@ -123,7 +124,7 @@ function loadRecent(): string[] {
 
 export async function uploadImage(file: File): Promise<string> {
   if (file.size > 3 * 1024 * 1024) throw new Error('A imagem passa de 3 MB.');
-  const res = await fetch(apiPath('api/upload'), { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
+  const res = await fetch(apiPath('api/upload'), { method: 'POST', headers: { 'Content-Type': file.type, ...(await authHeaders()) }, body: file });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.url) throw new Error(data.error ?? 'Não foi possível enviar a imagem.');
   return data.url;

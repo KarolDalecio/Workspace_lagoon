@@ -108,7 +108,7 @@ export interface SpaceMap {
   version?: number;
 }
 
-export const MAP_VERSION = 6;
+export const MAP_VERSION = 7;
 
 
 type Tiles<T> = { x: number; y: number; value: T }[];
@@ -681,6 +681,7 @@ function officeRoom(id: string, name: string, auditorium?: string) {
   b.floor(59, 10, 3, 3, 'water');
   b.flag('impassable', 59, 10, 3, 3);
   b.put('rock', 61, 9, { color: 1 });
+  b.put('surfboard', 61, 8);
   b.put('fishingrod', 58, 11);
   b.put('flowers', 58, 12);
   b.area('Sala do Guilherme', 55, 4, 7, 9, false, OWNERS);
@@ -1211,6 +1212,25 @@ export function migrateMap(map: SpaceMap): boolean {
           delete room.impassable[tileKey(dog.x, dog.y)];
           if (dog.rot !== 1 && dog.rot !== 3) dog.rot = 1;
         }
+    }
+  }
+  if (from < 7) {
+    // v7: prancha de surf encostada na parede da Sala do Guilherme.
+    for (const room of Object.values(map.rooms)) {
+      if (!room.areaMeta['Sala do Guilherme'] || room.objects.some(o => o.type === 'surfboard')) continue;
+      const free = (x: number, y: number) =>
+        room.privateAreas[tileKey(x, y)] === 'Sala do Guilherme' && !objectAt(room, x, y) && !room.impassable[tileKey(x, y)] && room.floor[y]?.[x] !== 'water';
+      const spot = [
+        [61, 8],
+        [61, 6],
+        [61, 5],
+        [55, 5],
+        [55, 6],
+        [55, 8],
+      ].find(([x, y]) => free(x, y));
+      if (!spot) continue;
+      room.objects.push({ id: `${room.id}-surf`, type: 'surfboard', x: spot[0], y: spot[1], color: 0, rot: 0 });
+      room.impassable[tileKey(spot[0], spot[1])] = 1;
     }
   }
   map.version = MAP_VERSION;

@@ -102,6 +102,7 @@ export const CATALOG: Record<string, ObjectDef> = {
   /** Pets andam sozinhos pela área privada em que estão (por isso não bloqueiam passagem). */
   dog: { name: 'Cachorro', category: 'decoracao', w: 1, h: 1, colors: ['#d9a066', '#f2f2f2', '#3a3f4f', '#1c1c22'], rotations: [1, 3], blocks: false, label: 'Doguinho', keywords: 'pet animal akita pastor tricolor' },
   dogbed: { name: 'Caminha de pet', category: 'decoracao', w: 1, h: 1, colors: ['#5b6ee1', '#e15b64', '#2fb380', '#8a5a3c'], blocks: false, keywords: 'cachorro gato cama almofada' },
+  surfboard: { name: 'Prancha de surf', category: 'decoracao', w: 1, h: 1, colors: ['#3fb6d6', '#f0a73a', '#e5483a', '#f4f1ea', '#2fb380'], blocks: true, keywords: 'surf praia mar onda esporte' },
   fishingrod: { name: 'Vara de pesca', category: 'natureza', w: 1, h: 1, colors: ['#6b4423'], blocks: false, keywords: 'pescaria lago' },
   frame: { name: 'Quadro decorativo', category: 'decoracao', w: 1, h: 1, colors: ['#c99a62', '#3a3f4f', '#f2f2f2'], blocks: true, art: true, keywords: 'pintura arte pixel' },
   barrel: { name: 'Barril', category: 'decoracao', w: 1, h: 1, colors: ['#5a5f73', '#c0392b'], blocks: true },

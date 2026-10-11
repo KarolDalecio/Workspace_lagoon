@@ -640,6 +640,52 @@ const DRAW: Record<string, Draw> = {
     ctx.ellipse(px + 16, py + 20.5, 11, 6, 0, 0, Math.PI * 2);
     ctx.fill();
   },
+  /** Prancha em pé, encostada na parede (passa um pouco do tile para cima). */
+  surfboard(ctx, px, py, c) {
+    shadow(ctx, px + 17, py + 28, 7, 2.5);
+    ctx.save();
+    ctx.translate(px + 16, py + 12);
+    ctx.rotate(0.12);
+    // contorno + prancha (bico pontudo em cima, rabeta arredondada embaixo)
+    const board = () => {
+      ctx.beginPath();
+      ctx.moveTo(0, -22);
+      ctx.bezierCurveTo(7.5, -12, 7.5, 8, 5, 15);
+      ctx.quadraticCurveTo(0, 18.5, -5, 15);
+      ctx.bezierCurveTo(-7.5, 8, -7.5, -12, 0, -22);
+      ctx.closePath();
+    };
+    board();
+    ctx.fillStyle = shade(c, -0.3);
+    ctx.fill();
+    ctx.scale(0.86, 0.94);
+    board();
+    ctx.fillStyle = c;
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    ctx.translate(px + 16, py + 12);
+    ctx.rotate(0.12);
+    // longarina e faixas
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(0, -19);
+    ctx.lineTo(0, 15);
+    ctx.stroke();
+    const stripe = c === '#f4f1ea' ? '#3fb6d6' : '#f4f1ea';
+    rrect(ctx, -5.6, -3, 11.2, 2.2, 1, stripe);
+    rrect(ctx, -5.4, 0.4, 10.8, 1.1, 0.5, shade(c, -0.25));
+    // quilha
+    ctx.fillStyle = '#2a2d3f';
+    ctx.beginPath();
+    ctx.moveTo(-1, 10);
+    ctx.lineTo(1.5, 10);
+    ctx.lineTo(0.8, 16);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  },
   fishingrod(ctx, px, py, c) {
     rrect(ctx, px + 4, py + 18, 10, 10, 2, '#5b6ee1');
     circle(ctx, px + 9, py + 20, 2, '#3fb6d6');

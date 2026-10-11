@@ -27,7 +27,7 @@ import type { World } from '../world';
 import { drawAvatar, drawEmote, drawNameTag, drawSmoke, smokeClock } from './avatar';
 import { getImage, renderRoom } from './mapRenderer';
 import { drawFx } from './fx';
-import { drawObject } from './objects';
+import { drawDogLabel, drawDogStanding, drawObject } from './objects';
 import { findPath, type Point } from '../../../shared/path';
 
 const STEP_MS = 140;
@@ -53,6 +53,20 @@ export type Focus =
   | { type: 'fish'; x: number; y: number };
 
 const near = (a: Point, b: Point) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) <= 1;
+
+/** Pet desenhado: posição interpolada e quando parou de andar (para a animação de deitar). */
+interface PetView {
+  rx: number;
+  ry: number;
+  moving: boolean;
+  /** performance.now() de quando parou; 0 = já estava deitado. */
+  stoppedAt: number;
+}
+
+/** Depois de parar: fica em pé, dá uma voltinha e deita (ms). */
+const PET_STAND_MS = 300;
+const PET_SPIN_MS = 1200;
+const PET_LIE_MS = 450;
 
 /** Onde a pessoa está: área privada e/ou holofote. */
 export interface Place {
@@ -132,7 +146,7 @@ export class Engine {
   private imageVersion = 0;
   private lastLockedNotice = 0;
   /** Posição desenhada de cada pet (interpola entre os passos que chegam do servidor). */
-  private petPos = new Map<string, { rx: number; ry: number }>();
+  private petPos = new Map<string, PetView>();
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -484,19 +498,24 @@ export class Engine {
       if (o.type !== 'dog') continue;
       const pos = this.petPos.get(o.id);
       if (!pos || Math.hypot(o.x - pos.rx, o.y - pos.ry) > 3) {
-        this.petPos.set(o.id, { rx: o.x, ry: o.y });
+        this.petPos.set(o.id, { rx: o.x, ry: o.y, moving: false, stoppedAt: 0 });
         continue;
       }
       const dx = o.x - pos.rx;
       const dy = o.y - pos.ry;
       const dist = Math.hypot(dx, dy);
-      const speed = dt / 380;
+      const speed = dt / 370;
       if (dist <= speed) {
         pos.rx = o.x;
         pos.ry = o.y;
+        if (pos.moving) {
+          pos.moving = false;
+          pos.stoppedAt = performance.now();
+        }
       } else {
         pos.rx += (dx / dist) * speed;
         pos.ry += (dy / dist) * speed;
+        pos.moving = true;
       }
     }
     // Quando o avatar anda, a câmera volta aos poucos a segui-lo pelo centro.
@@ -691,11 +710,11 @@ export class Engine {
     // Pets entram na mesma ordem de profundidade que os avatares.
     const pets = room.objects
       .filter(o => o.type === 'dog')
-      .map(o => ({ o, ...(this.petPos.get(o.id) ?? { rx: o.x, ry: o.y }) }))
-      .sort((a, b) => a.ry - b.ry);
+      .map(o => ({ o, v: this.petPos.get(o.id) ?? { rx: o.x, ry: o.y, moving: false, stoppedAt: 0 } }))
+      .sort((a, b) => a.v.ry - b.v.ry);
     let pi = 0;
     const drawPetsUpTo = (y: number) => {
-      for (; pi < pets.length && pets[pi].ry <= y; pi++) drawObject(ctx, pets[pi].o, pets[pi].rx * TILE, pets[pi].ry * TILE);
+      for (; pi < pets.length && pets[pi].v.ry <= y; pi++) this.drawPet(pets[pi].o, pets[pi].v, now);
     };
     for (const p of players) {
       drawPetsUpTo(p.ry);
@@ -740,6 +759,37 @@ export class Engine {
     for (const e of this.world.fx) if (e.room === room.id) drawFx(ctx, e, (now - e.born) / 1000);
 
     if (this.mm) this.renderMapmaker(room, viewW, viewH);
+  }
+
+  /** Pet andando em pé; ao parar dá uma voltinha e deita (pose deitada = desenho normal do objeto). */
+  private drawPet(o: PlacedObject, v: PetView, now: number) {
+    const { ctx } = this;
+    const px = v.rx * TILE;
+    const py = v.ry * TILE;
+    const facing = o.rot === 3 ? -1 : 1;
+    const phase = now / 85;
+    if (v.moving) return drawDogStanding(ctx, o, px, py, facing, phase, true);
+    const t = now - v.stoppedAt;
+    if (!v.stoppedAt || t >= PET_STAND_MS + PET_SPIN_MS + PET_LIE_MS) return drawObject(ctx, o, px, py);
+    if (t < PET_STAND_MS) return drawDogStanding(ctx, o, px, py, facing, phase, false);
+    if (t < PET_STAND_MS + PET_SPIN_MS) {
+      // voltinha num círculo pequeno: vira para um lado e para o outro seguindo o caminho
+      const ang = ((t - PET_STAND_MS) / PET_SPIN_MS) * Math.PI * 2;
+      const dir = Math.cos(ang) >= 0 ? facing : (-facing as 1 | -1);
+      return drawDogStanding(ctx, o, px + Math.sin(ang) * 4 * facing, py - (1 - Math.cos(ang)) * 1.5, dir, phase, true);
+    }
+    // deitando: o corpo em pé some enquanto o deitado aparece "assentando"
+    const k = (t - PET_STAND_MS - PET_SPIN_MS) / PET_LIE_MS;
+    ctx.save();
+    ctx.globalAlpha = 1 - k;
+    drawDogStanding(ctx, { ...o, label: undefined }, px, py, facing, phase, false);
+    ctx.globalAlpha = k;
+    ctx.translate(px + 16, py + 28);
+    ctx.scale(1, 0.75 + k * 0.25);
+    ctx.translate(-px - 16, -py - 28);
+    drawObject(ctx, { ...o, label: undefined }, px, py);
+    ctx.restore();
+    if (o.label) drawDogLabel(ctx, o.label, px, py);
   }
 
   private renderFocus(room: Room, now: number) {

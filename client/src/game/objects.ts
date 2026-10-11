@@ -623,20 +623,7 @@ const DRAW: Record<string, Draw> = {
     circle(ctx, px + 6.6, py + 12.6, 1.1, '#1d1d28');
     circle(ctx, px + 11.4, py + 12.6, 1.1, '#1d1d28');
     circle(ctx, px + 9, py + 16.2, 1.3, '#1d1d28');
-    if (o.label) {
-      ctx.save();
-      ctx.font = '600 6px Inter, system-ui, sans-serif';
-      const w = ctx.measureText(o.label).width + 6;
-      ctx.fillStyle = 'rgba(22,24,38,0.75)';
-      ctx.beginPath();
-      ctx.roundRect(px + 16 - w / 2, py - 6, w, 9, 4.5);
-      ctx.fill();
-      ctx.fillStyle = '#ffe08a';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(o.label, px + 16, py - 1.3);
-      ctx.restore();
-    }
+    if (o.label) drawDogLabel(ctx, o.label, px, py);
   },
   dogbed(ctx, px, py, c) {
     shadow(ctx, px + 16, py + 27, 15, 3);
@@ -823,6 +810,112 @@ const DRAW: Record<string, Draw> = {
 };
 
 /** Desenha um objeto do catálogo com o canto superior esquerdo em (px, py). */
+/**
+ * Cachorro em pé, de perfil, olhando para a direita (`facing` = -1 espelha).
+ * `phase` (radianos) anima as patas e o rabo; `walking` = false deixa as patas paradas.
+ */
+export function drawDogStanding(
+  ctx: Ctx,
+  o: Pick<PlacedObject, 'type' | 'color' | 'label'>,
+  px: number,
+  py: number,
+  facing: 1 | -1,
+  phase: number,
+  walking: boolean,
+) {
+  const def = CATALOG[o.type];
+  const c = def?.colors[o.color] ?? '#d9a066';
+  const tricolor = c === '#1c1c22';
+  const white = '#f4f1ea';
+  const tan = '#b8743a';
+  const legs = tricolor ? tan : shade(c, -0.1);
+  const swing = walking ? Math.sin(phase) * 2.6 : 0;
+  const bob = walking ? Math.abs(Math.sin(phase)) * 0.9 : 0;
+  const wag = Math.sin(phase * (walking ? 2 : 1.4)) * 2.2;
+
+  shadow(ctx, px + 16, py + 28, 11, 3);
+  ctx.save();
+  ctx.translate(px + 16, py);
+  ctx.scale(facing, 1);
+  ctx.translate(-16, -bob);
+
+  const leg = (hx: number, foot: number, color: string) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.8;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(hx, 19);
+    ctx.lineTo(hx + foot, 26.5 + bob);
+    ctx.stroke();
+    circle(ctx, hx + foot, 26.8 + bob, 1.6, tricolor ? white : shade(c, 0.15));
+  };
+  // patas do lado de lá (mais escuras) primeiro; pares diagonais andam juntos
+  const far = tricolor ? shade(tan, -0.25) : shade(c, -0.35);
+  leg(10.5, -swing, far);
+  leg(21.5, swing, far);
+  // rabo abanando
+  ctx.strokeStyle = c;
+  ctx.lineWidth = 2.6;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(8, 16);
+  ctx.quadraticCurveTo(4, 13, 3.5, 9 + wag);
+  ctx.stroke();
+  // corpo
+  ctx.fillStyle = c;
+  ctx.beginPath();
+  ctx.ellipse(16, 17.5, 9.5, 5.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  if (tricolor) {
+    ctx.fillStyle = 'rgba(160,160,170,0.18)';
+    ctx.beginPath();
+    ctx.ellipse(15, 14.8, 6, 1.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  leg(8.5, swing, legs);
+  leg(23.5, -swing, legs);
+  // peito branco
+  ctx.fillStyle = white;
+  ctx.beginPath();
+  ctx.ellipse(23, 19, 3, 3.6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // cabeça de perfil
+  circle(ctx, 25, 11, 5.2, c);
+  ctx.fillStyle = white;
+  ctx.beginPath();
+  ctx.ellipse(28.8, 13, 3.2, 2.3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  if (tricolor) {
+    circle(ctx, 27.3, 11.4, 1.4, tan);
+    ctx.fillStyle = white;
+    ctx.fillRect(25.6, 6.2, 1.4, 5);
+  }
+  circle(ctx, 31, 12.4, 1.2, '#1d1d28');
+  circle(ctx, 26.6, 9.7, 1, '#1d1d28');
+  // orelha caída
+  ctx.fillStyle = shade(c, tricolor ? 0.25 : -0.25);
+  ctx.beginPath();
+  ctx.ellipse(22.6, 9.5, 2.2, 3.6, 0.35, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  if (o.label) drawDogLabel(ctx, o.label, px, py);
+}
+
+export function drawDogLabel(ctx: Ctx, label: string, px: number, py: number) {
+  ctx.save();
+  ctx.font = '600 6px Inter, system-ui, sans-serif';
+  const w = ctx.measureText(label).width + 6;
+  ctx.fillStyle = 'rgba(22,24,38,0.75)';
+  ctx.beginPath();
+  ctx.roundRect(px + 16 - w / 2, py - 6, w, 9, 4.5);
+  ctx.fill();
+  ctx.fillStyle = '#ffe08a';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, px + 16, py - 1.3);
+  ctx.restore();
+}
+
 export function drawObject(ctx: Ctx, o: Pick<PlacedObject, 'type' | 'x' | 'y' | 'color' | 'rot' | 'label' | 'art'>, px = o.x * T, py = o.y * T) {
   const def = CATALOG[o.type];
   const draw = DRAW[o.type];

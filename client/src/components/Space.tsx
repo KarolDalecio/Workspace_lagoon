@@ -52,7 +52,10 @@ export function Space({ world, media, onLeave }: { world: World; media: LocalMed
     const engine = new Engine(canvasRef.current!, world, peers, mediaEls);
     engine.onPlaceChange = setPlace;
     engine.onFocusChange = setFocus;
-    engine.onLocked = area => setToast(`🔒 "${area}" está trancada`);
+    engine.onLocked = area => {
+      const meta = world.map.rooms[world.self.room]?.areaMeta[area];
+      setToast(meta?.locked ? `🔒 "${area}" está trancada` : `🚫 "${area}" já está ocupada`);
+    };
     world.onNotice = setToast;
     engine.onInteract = f => interactRef.current(f);
     engine.start();

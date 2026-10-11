@@ -12,6 +12,7 @@ import {
   createDefaultMap,
   deskAreaAt,
   editDenied,
+  fullAgainst,
   isAllowed,
   isSpaceMap,
   isWalkable,
@@ -321,14 +322,21 @@ io.on('connection', socket => {
       socket.emit('notice', `🔒 "${locked}" está trancada.`);
       return;
     }
+    const full = dist === 1 ? fullAgainst(room, x, y, p.id, space.players.values()) : null;
+    if (full) {
+      socket.emit('player:moved', { id: p.id, room: p.room, x: p.x, y: p.y, dir: p.dir });
+      socket.emit('notice', `🚫 "${full}" já está ocupada.`);
+      return;
+    }
     p.dir = dir;
     // Portal: só dispara ao pisar nele (chegar num portal pelo outro lado não te manda de volta).
     const portal = dist === 1 ? room.portals[tileKey(x, y)] : undefined;
     if (portal && space.map.rooms[portal.room]) {
-      const lockedDest = lockedAgainst(space.map.rooms[portal.room], portal.x, portal.y, who());
+      const dest = space.map.rooms[portal.room];
+      const lockedDest = lockedAgainst(dest, portal.x, portal.y, who()) ?? fullAgainst(dest, portal.x, portal.y, p.id, space.players.values());
       if (lockedDest) {
         socket.emit('player:moved', { id: p.id, room: p.room, x: p.x, y: p.y, dir: p.dir });
-        socket.emit('notice', `🔒 O portal leva para "${lockedDest}", que está trancada.`);
+        socket.emit('notice', `🔒 O portal leva para "${lockedDest}", que está trancada ou lotada.`);
         return;
       }
       relocate(space, p, portal.room, portal.x, portal.y);

@@ -1146,6 +1146,25 @@ export function Mapmaker({ world, engine, onClose, onToast }: { world: World; en
                         />{' '}
                         Área de mesa
                       </label>
+                      <label className="field">
+                        Lotação máxima (vazio = sem limite)
+                        <input
+                          key={inspectInfo.area}
+                          type="number"
+                          min={1}
+                          max={500}
+                          defaultValue={room.areaMeta[inspectInfo.area]?.capacity ?? ''}
+                          onBlur={e => {
+                            const meta = { ...room.areaMeta[inspectInfo.area!] };
+                            const n = parseInt(e.target.value, 10);
+                            if (n >= 1) meta.capacity = n;
+                            else delete meta.capacity;
+                            if (meta.capacity !== room.areaMeta[inspectInfo.area!]?.capacity)
+                              edit({ kind: 'area-meta', room: room.id, name: inspectInfo.area!, meta });
+                          }}
+                          onKeyDown={e => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+                        />
+                      </label>
                       <AreaAccess world={world} room={room} name={inspectInfo.area} />
                       <button
                         className="chip"

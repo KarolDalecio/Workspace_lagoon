@@ -8,6 +8,7 @@ import {
   deskAreaAt,
   footprint,
   interactionNear,
+  fullAgainst,
   isWalkable,
   lockedAgainst,
   onSpotlight,
@@ -190,10 +191,12 @@ export class Engine {
     const room = this.world.map.rooms[me.room];
     if (!room) return;
     const who = this.world.who;
-    this.path = findPath(room, me.x, me.y, x, y, adjacent, (tx, ty) => !lockedAgainst(room, tx, ty, who));
+    const players = [...this.world.players.values()];
+    const blocked = (tx: number, ty: number) => lockedAgainst(room, tx, ty, who) ?? fullAgainst(room, tx, ty, me.id, players);
+    this.path = findPath(room, me.x, me.y, x, y, adjacent, (tx, ty) => !blocked(tx, ty));
     if (!this.path.length) {
-      const locked = lockedAgainst(room, x, y, who);
-      if (locked) this.notifyLocked(locked);
+      const name = blocked(x, y);
+      if (name) this.notifyLocked(name);
     }
     this.target = this.path.at(-1) ?? null;
   }
@@ -372,7 +375,7 @@ export class Engine {
     this.lastStep = now;
     const prevDir = me.dir;
     let moved = false;
-    const locked = lockedAgainst(room, next.x, next.y, this.world.who);
+    const locked = lockedAgainst(room, next.x, next.y, this.world.who) ?? fullAgainst(room, next.x, next.y, me.id, this.world.players.values());
     if (locked) {
       // Porta trancada: vira para ela, mas não entra.
       this.path = [];

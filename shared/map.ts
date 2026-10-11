@@ -61,6 +61,8 @@ export interface AreaMeta {
   /** Área trancada: só quem está em `allowed` entra (e edita o que tem dentro). */
   locked?: boolean;
   allowed?: AllowedPerson[];
+  /** Lotação máxima (ex.: 1 numa cabine de foco). Sem valor = sem limite. */
+  capacity?: number;
 }
 
 /** Quem está tentando entrar/editar. */
@@ -104,31 +106,8 @@ export interface SpaceMap {
   version?: number;
 }
 
-export const MAP_VERSION = 2;
+export const MAP_VERSION = 4;
 
-/**
- * Atualiza um mapa salvo por uma versão anterior. Mexe só no que cada versão
- * introduziu, sem apagar edições de ninguém. Retorna true se algo mudou.
- */
-export function migrateMap(map: SpaceMap): boolean {
-  const from = map.version ?? 1;
-  if (from >= MAP_VERSION) return false;
-  if (from < 2) {
-    // v2: o Hachi ficou tricolor (como na foto) e ganhou uma caminha.
-    for (const room of Object.values(map.rooms))
-      for (let i = 0; i < room.objects.length; i++) {
-        const dog = room.objects[i];
-        if (dog.type !== 'dog' || dog.label !== 'Hachi') continue;
-        dog.color = 3;
-        if (!room.objects.some(o => o.type === 'dogbed' && o.x === dog.x && o.y === dog.y)) {
-          room.objects.splice(i, 0, { id: `${dog.id}-bed`.slice(0, 48), type: 'dogbed', x: dog.x, y: dog.y, color: 0, rot: 0 });
-          i++;
-        }
-      }
-  }
-  map.version = MAP_VERSION;
-  return true;
-}
 
 type Tiles<T> = { x: number; y: number; value: T }[];
 
@@ -220,6 +199,31 @@ export function lockedAgainst(room: Room, x: number, y: number, who: Who) {
   const name = areaAt(room, x, y);
   if (!name) return null;
   return isAllowed(room.areaMeta[name], who) ? null : name;
+}
+
+/** Quem ocupa uma posição (para checar lotação). */
+export interface Occupant {
+  id: string;
+  room: string;
+  x: number;
+  y: number;
+}
+
+/**
+ * Área lotada em que o tile fica, para quem ainda não está nela.
+ * Retorna o nome da área se a pessoa não puder entrar por lotação.
+ */
+export function fullAgainst(room: Room, x: number, y: number, selfId: string, people: Iterable<Occupant>) {
+  const name = areaAt(room, x, y);
+  const capacity = name ? room.areaMeta[name]?.capacity : undefined;
+  if (!name || !capacity) return null;
+  let inside = 0;
+  for (const p of people) {
+    if (p.room !== room.id || areaAt(room, p.x, p.y) !== name) continue;
+    if (p.id === selfId) return null; // já está dentro
+    inside++;
+  }
+  return inside >= capacity ? name : null;
 }
 
 export function canEnter(room: Room, x: number, y: number, who: Who) {
@@ -352,9 +356,19 @@ function emptyRoom(id: string, name: string, width: number, height: number, floo
 class Builder {
   room: Room;
   private n = 0;
+  private prefix: string;
 
   constructor(id: string, name: string, w: number, h: number, floor: Floor) {
     this.room = emptyRoom(id, name, w, h, floor);
+    this.prefix = id;
+  }
+
+  /** Edita uma sala já existente; `prefix` evita colidir com os ids dos objetos que ela já tem. */
+  static wrap(room: Room, prefix: string) {
+    const b = new Builder(room.id, room.name, 4, 4, 'wood');
+    b.room = room;
+    b.prefix = prefix;
+    return b;
   }
 
   floor(x: number, y: number, w: number, h: number, f: Floor) {
@@ -367,7 +381,7 @@ class Builder {
 
   put(type: string, x: number, y: number, opts: { color?: number; rot?: number; interaction?: Interaction; label?: string } = {}) {
     const def = CATALOG[type];
-    const obj: PlacedObject = { id: `${this.room.id}-${(this.n++).toString(36)}`, type, x, y, color: opts.color ?? 0, rot: opts.rot ?? def.rotations?.[0] ?? 0 };
+    const obj: PlacedObject = { id: `${this.prefix}-${(this.n++).toString(36)}`, type, x, y, color: opts.color ?? 0, rot: opts.rot ?? def.rotations?.[0] ?? 0 };
     if (opts.interaction) obj.interaction = opts.interaction;
     if (def.label !== undefined) obj.label = opts.label ?? def.label;
     this.room.objects.push(obj);
@@ -391,9 +405,10 @@ class Builder {
     }
   }
 
-  area(name: string, x: number, y: number, w: number, h: number, desk = false, allowedNames?: string[]) {
+  area(name: string, x: number, y: number, w: number, h: number, desk = false, allowedNames?: string[], capacity?: number) {
     for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) this.room.privateAreas[tileKey(xx, yy)] = name;
     this.room.areaMeta[name] = allowedNames ? { desk, locked: true, allowed: allowedNames.map(n => ({ name: n, tag: null })) } : { desk };
+    if (capacity) this.room.areaMeta[name].capacity = capacity;
   }
 
   portal(x: number, y: number, target: PortalTarget) {
@@ -417,6 +432,29 @@ function blankRoom(id: string, name: string) {
   b.wallV(23, 1, 14, 1);
   b.flag('spawn', 10, 7, 4, 2);
   return b.room;
+}
+
+/**
+ * Sala de foco (x 22..27, y 5..10): 6 cabines isoladas por paredes, cada uma com
+ * cadeira + computador e lotação de 1 pessoa. As da esquerda abrem para o corredor
+ * da esquerda; as da direita, para o lado do jardim zen.
+ */
+function focusPods(b: Builder) {
+  b.floor(22, 5, 6, 6, 'dark');
+  for (const y of [6, 8, 10]) b.wallH(22, 27, y, 0);
+  for (const y of [5, 7, 9]) {
+    b.wallH(24, 25, y, 0);
+    b.put('smalldesk', 23, y);
+    b.put('smalldesk', 26, y);
+    b.put('chair', 22, y, { rot: 3 });
+    b.put('chair', 27, y, { rot: 1 });
+  }
+  let n = 1;
+  for (const y of [5, 7, 9]) {
+    b.area(`Foco ${n++}`, 22, y, 2, 1, false, undefined, 1);
+    b.area(`Foco ${n++}`, 26, y, 2, 1, false, undefined, 1);
+  }
+  b.put('plaque', 24, 7, { label: 'FOCUS' });
 }
 
 const WELCOME: Interaction = {
@@ -526,17 +564,7 @@ function officeRoom(id: string, name: string, auditorium?: string) {
     b.portal(35, 3, { room: auditorium, x: 15, y: 19 });
   }
 
-  // Sala de foco: 6 cabines
-  b.floor(22, 5, 6, 6, 'dark');
-  for (const y of [5, 7, 9]) {
-    b.put('smalldesk', 23, y);
-    b.put('smalldesk', 26, y);
-    b.put('chair', 22, y, { rot: 3 });
-    b.put('chair', 27, y, { rot: 1 });
-  }
-  b.flag('impassable', 24, 5, 2, 6);
-  b.put('plaque', 24, 7, { label: 'FOCUS' });
-  b.area('Foco', 22, 5, 6, 6);
+  focusPods(b);
 
   // Jardim zen
   b.floor(29, 5, 5, 5, 'sand');
@@ -862,6 +890,8 @@ export function cleanRoom(v: unknown): Room | null {
 function cleanMeta(v: unknown): AreaMeta {
   const m = (v ?? {}) as AreaMeta;
   const meta: AreaMeta = { desk: !!m.desk };
+  const capacity = Number(m.capacity);
+  if (Number.isInteger(capacity) && capacity >= 1 && capacity <= 500) meta.capacity = capacity;
   if (m.locked) {
     meta.locked = true;
     meta.allowed = (Array.isArray(m.allowed) ? m.allowed : [])
@@ -1069,4 +1099,46 @@ function applyOne(map: SpaceMap, edit: MapEdit, depth: number): Applied | null {
     }
   }
   return null;
+}
+
+/**
+ * Atualiza um mapa salvo por uma versão anterior. Mexe só no que cada versão
+ * introduziu, sem apagar edições de ninguém. Retorna true se algo mudou.
+ */
+export function migrateMap(map: SpaceMap): boolean {
+  const from = map.version ?? 1;
+  if (from >= MAP_VERSION) return false;
+  if (from < 2) {
+    // v2: o Hachi ficou tricolor (como na foto) e ganhou uma caminha.
+    for (const room of Object.values(map.rooms))
+      for (let i = 0; i < room.objects.length; i++) {
+        const dog = room.objects[i];
+        if (dog.type !== 'dog' || dog.label !== 'Hachi') continue;
+        dog.color = 3;
+        if (!room.objects.some(o => o.type === 'dogbed' && o.x === dog.x && o.y === dog.y)) {
+          room.objects.splice(i, 0, { id: `${dog.id}-bed`.slice(0, 48), type: 'dogbed', x: dog.x, y: dog.y, color: 0, rot: 0 });
+          i++;
+        }
+      }
+  }
+  if (from < 3) {
+    // v3: a sala de foco virou 6 cabines isoladas, uma pessoa por computador.
+    for (const room of Object.values(map.rooms)) {
+      if (!room.areaMeta['Foco']) continue;
+      const inFocus = (x: number, y: number) => x >= 22 && x <= 27 && y >= 5 && y <= 10;
+      room.objects = room.objects.filter(o => !inFocus(o.x, o.y));
+      for (const k of Object.keys(room.privateAreas)) if (room.privateAreas[k] === 'Foco') delete room.privateAreas[k];
+      delete room.areaMeta['Foco'];
+      for (let y = 5; y <= 10; y++) for (let x = 22; x <= 27; x++) delete room.impassable[tileKey(x, y)];
+      focusPods(Builder.wrap(room, `${room.id}-v3`));
+    }
+  }
+  if (from < 4) {
+    // v4: paredes das cabines de foco num tom que contrasta com o piso escuro.
+    for (const room of Object.values(map.rooms))
+      for (const o of room.objects)
+        if (o.type === 'wall' && o.color === 5 && o.x >= 22 && o.x <= 27 && o.y >= 5 && o.y <= 10 && room.areaMeta['Foco 1']) o.color = 0;
+  }
+  map.version = MAP_VERSION;
+  return true;
 }

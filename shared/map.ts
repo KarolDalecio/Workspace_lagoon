@@ -100,6 +100,34 @@ export interface SpaceMap {
   entry: string;
   /** "sala:área" → dono. */
   claims: Record<string, DeskClaim>;
+  /** Versão do formato/conteúdo, para migrar espaços já salvos (ver migrateMap). */
+  version?: number;
+}
+
+export const MAP_VERSION = 2;
+
+/**
+ * Atualiza um mapa salvo por uma versão anterior. Mexe só no que cada versão
+ * introduziu, sem apagar edições de ninguém. Retorna true se algo mudou.
+ */
+export function migrateMap(map: SpaceMap): boolean {
+  const from = map.version ?? 1;
+  if (from >= MAP_VERSION) return false;
+  if (from < 2) {
+    // v2: o Hachi ficou tricolor (como na foto) e ganhou uma caminha.
+    for (const room of Object.values(map.rooms))
+      for (let i = 0; i < room.objects.length; i++) {
+        const dog = room.objects[i];
+        if (dog.type !== 'dog' || dog.label !== 'Hachi') continue;
+        dog.color = 3;
+        if (!room.objects.some(o => o.type === 'dogbed' && o.x === dog.x && o.y === dog.y)) {
+          room.objects.splice(i, 0, { id: `${dog.id}-bed`.slice(0, 48), type: 'dogbed', x: dog.x, y: dog.y, color: 0, rot: 0 });
+          i++;
+        }
+      }
+  }
+  map.version = MAP_VERSION;
+  return true;
 }
 
 type Tiles<T> = { x: number; y: number; value: T }[];
@@ -587,7 +615,8 @@ function officeRoom(id: string, name: string, auditorium?: string) {
   b.put('lamp', 61, 4);
   b.put('lamp', 55, 7, { color: 1 });
   b.put('lamp', 55, 12);
-  b.put('dog', 57, 9, { label: 'Hachi' });
+  b.put('dogbed', 57, 9);
+  b.put('dog', 57, 9, { label: 'Hachi', color: 3 });
   b.floor(59, 10, 3, 3, 'water');
   b.flag('impassable', 59, 10, 3, 3);
   b.put('rock', 61, 9, { color: 1 });
@@ -717,7 +746,13 @@ export function createRoom(template: RoomTemplate, id: string, name: string): Ro
 export function createDefaultMap(): SpaceMap {
   const office = officeRoom('escritorio', 'Escritório', 'auditorio');
   const auditorium = auditoriumRoom('auditorio', 'Auditório', 'escritorio');
-  return { rooms: { escritorio: office, auditorio: auditorium }, order: ['escritorio', 'auditorio'], entry: 'escritorio', claims: {} };
+  return {
+    rooms: { escritorio: office, auditorio: auditorium },
+    order: ['escritorio', 'auditorio'],
+    entry: 'escritorio',
+    claims: {},
+    version: MAP_VERSION,
+  };
 }
 
 // ---------------------------------------------------------------- validação

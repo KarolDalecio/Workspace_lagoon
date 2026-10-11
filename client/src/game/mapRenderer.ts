@@ -35,12 +35,12 @@ export function drawFloor(ctx: CanvasRenderingContext2D, f: Floor, x: number, y:
       if (h % 4 === 0) {
         ctx.fillStyle = '#7cbf5e';
         const gx = px + (h % 24) + 4;
-        const gy = py + ((h >> 5) % 22) + 6;
+        const gy = py + ((h >>> 5) % 22) + 6;
         ctx.fillRect(gx, gy, 1, 3);
         ctx.fillRect(gx + 2, gy - 1, 1, 4);
         ctx.fillRect(gx + 4, gy, 1, 3);
       }
-      if (h % 23 === 0) circle(ctx, px + 8 + (h % 16), py + 8 + ((h >> 4) % 16), 1.6, h % 2 ? '#f4d35e' : '#f28fb1');
+      if (h % 23 === 0) circle(ctx, px + 8 + (h % 16), py + 8 + ((h >>> 4) % 16), 1.6, h % 2 ? '#f4d35e' : '#f28fb1');
       break;
     case 'wood':
       ctx.fillStyle = '#c99a66';
@@ -48,7 +48,7 @@ export function drawFloor(ctx: CanvasRenderingContext2D, f: Floor, x: number, y:
       ctx.fillStyle = '#b98955';
       for (let i = 0; i < 4; i++) {
         ctx.fillRect(px, py + i * 8 + 7, T, 1);
-        ctx.fillRect(px + ((h >> (i * 3)) % T), py + i * 8, 1, 7);
+        ctx.fillRect(px + ((h >>> (i * 3)) % T), py + i * 8, 1, 7);
       }
       break;
     case 'carpet':
@@ -81,7 +81,7 @@ export function drawFloor(ctx: CanvasRenderingContext2D, f: Floor, x: number, y:
       ctx.strokeStyle = '#6db0ea';
       ctx.lineWidth = 1.5;
       for (let i = 0; i < 2; i++) {
-        const wx = px + 4 + ((h >> (i * 4)) % 18);
+        const wx = px + 4 + ((h >>> (i * 4)) % 18);
         const wy = py + 8 + i * 12;
         ctx.beginPath();
         ctx.arc(wx, wy, 4, Math.PI * 1.15, Math.PI * 1.85);
@@ -94,7 +94,7 @@ export function drawFloor(ctx: CanvasRenderingContext2D, f: Floor, x: number, y:
       ctx.fillStyle = '#7a4d32';
       for (let i = 0; i < 4; i++) {
         ctx.fillRect(px, py + i * 8 + 7, T, 1);
-        ctx.fillRect(px + ((h >> (i * 3)) % T), py + i * 8, 1, 7);
+        ctx.fillRect(px + ((h >>> (i * 3)) % T), py + i * 8, 1, 7);
       }
       break;
     case 'sand':
@@ -129,7 +129,7 @@ export function drawFloor(ctx: CanvasRenderingContext2D, f: Floor, x: number, y:
       ctx.fillStyle = (x + y) % 2 ? '#4f8f3c' : '#4b8a39';
       ctx.fillRect(px, py, T, T);
       ctx.fillStyle = '#5ea648';
-      for (let i = 0; i < 4; i++) circle(ctx, px + 6 + ((h >> (i * 4)) % 20), py + 6 + ((h >> (i * 3 + 2)) % 20), 3, '#5ea648');
+      for (let i = 0; i < 4; i++) circle(ctx, px + 6 + ((h >>> (i * 4)) % 20), py + 6 + ((h >>> (i * 3 + 2)) % 20), 3, '#5ea648');
       break;
     case 'darkrug':
       ctx.fillStyle = '#4a3328';

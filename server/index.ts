@@ -16,6 +16,7 @@ import {
   isSpaceMap,
   isWalkable,
   lockedAgainst,
+  migrateMap,
   spawnTiles,
   tileKey,
   type AreaMeta,
@@ -82,7 +83,14 @@ function restoreMap(data: unknown): SpaceMap {
         const room = cleanRoom(data.rooms[rid]);
         if (room) rooms[room.id] = room;
       }
-      if (rooms[data.entry]) return { rooms, order: data.order.filter(r => rooms[r]), entry: data.entry, claims: data.claims ?? {} };
+      if (rooms[data.entry])
+        return {
+          rooms,
+          order: data.order.filter(r => rooms[r]),
+          entry: data.entry,
+          claims: data.claims ?? {},
+          version: Number.isInteger(data.version) ? data.version : 1,
+        };
     }
   } catch {
     // formato inválido
@@ -108,6 +116,10 @@ async function getSpace(id: string): Promise<Space> {
       .then(saved => {
         const space: Space = { players: new Map(), chat: saved?.chat.slice(-CHAT_HISTORY) ?? [], map: restoreMap(saved?.map) };
         spaces.set(id, space);
+        if (migrateMap(space.map) && saved) {
+          console.log(`Espaço "${id}" migrado para a versão ${space.map.version}`);
+          scheduleSave(id, space);
+        }
         return space;
       })
       .finally(() => loading.delete(id));

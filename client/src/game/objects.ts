@@ -490,34 +490,64 @@ const DRAW: Record<string, Draw> = {
       ctx.fillRect(px + 6 + i * 7, py + 18, 5, 9);
     }
   },
+  /** Cachorro deitado de lado. Na cor quase preta, ganha as marcações de tricolor (pastor-australiano). */
   dog(ctx, px, py, c, _rot, o) {
-    shadow(ctx, px + 16, py + 28, 10, 3);
-    const dark = shade(c, -0.25);
-    // corpo deitado + cabeça de akita
+    const tricolor = c === '#1c1c22';
+    const white = '#f4f1ea';
+    const tan = '#b8743a';
+    const legs = tricolor ? tan : shade(c, -0.1);
+    shadow(ctx, px + 16, py + 28, 12, 3);
+    // patas esticadas para a frente e para trás
+    rrect(ctx, px + 2, py + 23, 10, 3.5, 1.5, legs);
+    rrect(ctx, px + 4, py + 26, 9, 3, 1.5, legs);
+    rrect(ctx, px + 22, py + 24, 8, 3.5, 1.5, legs);
+    for (const [x, y] of [[2, 24.8], [4, 27.5], [28.5, 25.8]]) circle(ctx, px + x, py + y, 1.7, white);
+    // corpo e rabo
     ctx.fillStyle = c;
     ctx.beginPath();
-    ctx.ellipse(px + 18, py + 22, 10, 6, 0, 0, Math.PI * 2);
+    ctx.ellipse(px + 18, py + 21, 11, 6.5, 0, 0, Math.PI * 2);
     ctx.fill();
-    circle(ctx, px + 25, py + 17, 3.5, '#f2f2f2');
-    circle(ctx, px + 11, py + 14, 7, c);
-    ctx.fillStyle = '#f7efe3';
+    circle(ctx, px + 29, py + 18, 3.2, c);
+    if (tricolor) {
+      // leve mescla acinzentada no lombo, como na foto
+      ctx.fillStyle = 'rgba(160,160,170,0.18)';
+      ctx.beginPath();
+      ctx.ellipse(px + 20, py + 18, 7, 2.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // peito branco
+    ctx.fillStyle = white;
     ctx.beginPath();
-    ctx.ellipse(px + 11, py + 17, 5, 3.5, 0, 0, Math.PI * 2);
+    ctx.ellipse(px + 10, py + 21.5, 4, 4.5, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = dark;
+    // cabeça e orelhas meio caídas
+    circle(ctx, px + 9, py + 13, 6.5, c);
+    ctx.fillStyle = shade(c, tricolor ? 0.25 : -0.25);
     ctx.beginPath();
-    ctx.moveTo(px + 5, py + 10);
-    ctx.lineTo(px + 6, py + 3);
-    ctx.lineTo(px + 10, py + 8);
-    ctx.moveTo(px + 17, py + 10);
-    ctx.lineTo(px + 16, py + 3);
-    ctx.lineTo(px + 12, py + 8);
+    ctx.ellipse(px + 3.8, py + 9, 2.4, 3.6, -0.5, 0, Math.PI * 2);
+    ctx.ellipse(px + 14.2, py + 9, 2.4, 3.6, 0.5, 0, Math.PI * 2);
     ctx.fill();
-    circle(ctx, px + 8.5, py + 13, 1.1, '#1d1d28');
-    circle(ctx, px + 13.5, py + 13, 1.1, '#1d1d28');
-    circle(ctx, px + 11, py + 16.5, 1.3, '#1d1d28');
-    ctx.fillStyle = '#e15b64';
-    ctx.fillRect(px + 7, py + 19, 8, 1.6);
+    // faixa branca na testa e focinho
+    ctx.fillStyle = white;
+    ctx.beginPath();
+    ctx.moveTo(px + 8, py + 7);
+    ctx.lineTo(px + 10, py + 7);
+    ctx.lineTo(px + 11, py + 15);
+    ctx.lineTo(px + 7, py + 15);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(px + 9, py + 17, 4.2, 3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    if (tricolor) {
+      circle(ctx, px + 4.6, py + 15.5, 1.7, tan);
+      circle(ctx, px + 13.4, py + 15.5, 1.7, tan);
+      circle(ctx, px + 6.6, py + 10.6, 1, tan);
+      circle(ctx, px + 11.4, py + 10.6, 1, tan);
+    }
+    circle(ctx, px + 6.6, py + 12.6, 1.1, '#1d1d28');
+    circle(ctx, px + 11.4, py + 12.6, 1.1, '#1d1d28');
+    circle(ctx, px + 9, py + 16.2, 1.3, '#1d1d28');
     if (o.label) {
       ctx.save();
       ctx.font = '600 6px Inter, system-ui, sans-serif';
@@ -532,6 +562,21 @@ const DRAW: Record<string, Draw> = {
       ctx.fillText(o.label, px + 16, py - 1.3);
       ctx.restore();
     }
+  },
+  dogbed(ctx, px, py, c) {
+    shadow(ctx, px + 16, py + 27, 15, 3);
+    ctx.fillStyle = shade(c, -0.25);
+    ctx.beginPath();
+    ctx.ellipse(px + 16, py + 20, 15.5, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = c;
+    ctx.beginPath();
+    ctx.ellipse(px + 16, py + 19, 15, 9, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = shade(c, 0.35);
+    ctx.beginPath();
+    ctx.ellipse(px + 16, py + 20.5, 11, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
   },
   fishingrod(ctx, px, py, c) {
     rrect(ctx, px + 4, py + 18, 10, 10, 2, '#5b6ee1');

@@ -17,6 +17,8 @@ export interface Upload {
 /** Onde ficam mapas, chat e imagens enviadas. */
 export interface Store {
   kind: string;
+  /** Sobrevive a um novo deploy/container? */
+  persistent: boolean;
   init(): Promise<void>;
   loadSpace(id: string): Promise<SavedSpace | null>;
   saveSpace(id: string, map: SpaceMap, chat: ChatMessage[]): Promise<void>;
@@ -29,6 +31,7 @@ const MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', gif:
 /** Arquivos em data/ — bom para rodar localmente. */
 class FileStore implements Store {
   kind = 'arquivos';
+  persistent = false;
   private spaces: string;
   private uploads: string;
 
@@ -73,10 +76,12 @@ class FileStore implements Store {
 /** Postgres — para produção (o container pode ser recriado sem perder nada). */
 export class PgStore implements Store {
   kind = 'postgres';
+  persistent = true;
   private pool: pg.Pool;
 
-  constructor(url: string | pg.Pool) {
-    this.pool = typeof url === 'string' ? new pg.Pool({ connectionString: url, max: 5 }) : url;
+  /** Sem URL, o driver usa as variáveis PGHOST/PGUSER/PGPASSWORD/PGDATABASE/PGPORT. */
+  constructor(url?: string | pg.Pool) {
+    this.pool = url instanceof pg.Pool ? url : new pg.Pool({ connectionString: url || undefined, max: 5 });
   }
 
   async init() {
@@ -119,8 +124,22 @@ export class PgStore implements Store {
   }
 }
 
-/** Usa Postgres se DATABASE_URL estiver definida; senão, arquivos locais. */
+/** Nomes aceitos para a URL do Postgres (o primeiro definido vale). */
+export const DATABASE_ENV = ['DATABASE_URL', 'POSTGRES_URL', 'POSTGRESQL_URL', 'DATABASE_PRIVATE_URL', 'PG_URL'];
+
+/** Usa Postgres se houver URL (ou PGHOST); senão, arquivos locais. */
 export function createStore(root: string): Store {
-  const url = process.env.DATABASE_URL;
-  return url ? new PgStore(url) : new FileStore(root);
+  const url = DATABASE_ENV.map(k => process.env[k]?.trim()).find(Boolean);
+  if (url || process.env.PGHOST) return new PgStore(url);
+  if (process.env.NODE_ENV === 'production')
+    console.warn(
+      [
+        '',
+        '⚠️  ATENÇÃO: nenhum banco configurado — salvando dentro do container.',
+        '    Mapas, chat e imagens SERÃO PERDIDOS no próximo deploy.',
+        `    Defina ${DATABASE_ENV[0]} (URL do Postgres) nas variáveis de ambiente do app e faça o deploy de novo.`,
+        '',
+      ].join('\n'),
+    );
+  return new FileStore(root);
 }

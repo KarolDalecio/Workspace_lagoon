@@ -190,7 +190,7 @@ const io = new Server<ClientToServer, ServerToClient>(server, { cors: { origin: 
 
 const dist = path.join(ROOT, 'dist');
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, storage: store.kind, spaces: spaces.size });
+  res.json({ ok: true, storage: store.kind, persistent: store.persistent, spaces: spaces.size });
 });
 
 /** Envio de imagens (fundo/primeiro plano das salas e interações de imagem), até 3 MB. */
@@ -432,6 +432,29 @@ io.on('connection', socket => {
     scheduleSave(spaceId, space);
   });
 
+  socket.on('map:import', data => {
+    const space = current();
+    if (!space || !spaceId || !me()) return;
+    if (Object.values(space.map.rooms).some(r => Object.values(r.areaMeta).some(m => !isAllowed(m, who())))) {
+      socket.emit('notice', '🔒 Só quem tem acesso a todas as áreas trancadas pode importar um mapa.');
+      return;
+    }
+    // Aceita tanto o mapa puro quanto o arquivo { map, chat } salvo em disco.
+    const raw = data && typeof data === 'object' && 'map' in data && !('rooms' in data) ? (data as { map: unknown }).map : data;
+    if (!isSpaceMap(raw)) {
+      socket.emit('notice', 'Este arquivo não parece ser um mapa da Praça.');
+      return;
+    }
+    const next = restoreMap(raw);
+    migrateMap(next);
+    space.map = next;
+    io.to(spaceId).emit('map:replaced', space.map);
+    for (const p of space.players.values()) if (!space.map.rooms[p.room]) relocate(space, p, space.map.entry);
+    evictLocked(space);
+    socket.emit('notice', '✅ Mapa importado e salvo.');
+    scheduleSave(spaceId, space);
+  });
+
   socket.on('desk:claim', area => {
     const p = me();
     const space = current();
@@ -478,6 +501,25 @@ io.on('connection', socket => {
     if (!space.players.size && !space.chat.length && !space.saveTimer) spaces.delete(spaceId);
   });
 });
+
+/** Num deploy o container recebe SIGTERM: grava o que estiver pendente antes de sair. */
+let shuttingDown = false;
+async function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const pending = [...spaces.entries()].filter(([, s]) => s.saveTimer);
+  console.log(`${signal}: gravando ${pending.length} espaço(s) antes de sair…`);
+  await Promise.allSettled(
+    pending.map(([id, s]) => {
+      clearTimeout(s.saveTimer);
+      s.saveTimer = undefined;
+      return store.saveSpace(id, s.map, s.chat);
+    }),
+  );
+  process.exit(0);
+}
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
 
 store
   .init()

@@ -1,5 +1,6 @@
 import {
   BoxSelect,
+  Download,
   Eraser,
   Hand,
   Home,
@@ -14,6 +15,7 @@ import {
   Stamp,
   Trash2,
   Undo2,
+  Upload,
   X,
   ZoomIn,
   ZoomOut,
@@ -835,6 +837,26 @@ export function Mapmaker({ world, engine, onClose, onToast }: { world: World; en
     }
   }
 
+  function downloadMap() {
+    const blob = new Blob([JSON.stringify(world.map)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `praca-${world.space}-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  async function importMap(file: File | undefined) {
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (!confirm('Substituir o mapa deste espaço pelo do arquivo? O mapa atual será trocado para todos.')) return;
+      world.socket.emit('map:import', data);
+    } catch {
+      onToast('Não consegui ler esse arquivo .json');
+    }
+  }
+
   const toolHint: Record<Mode, Partial<Record<Tool, string>>> = {
     objects: {
       select: 'Clique num objeto para ver detalhes; arraste para mover.',
@@ -891,6 +913,15 @@ export function Mapmaker({ world, engine, onClose, onToast }: { world: World; en
                   </button>
                 </>
               )}
+              <hr />
+              <span className="mm-menu-title">Backup do espaço</span>
+              <button className="mm-menu-item" onClick={downloadMap}>
+                <Download size={14} /> Baixar mapa (.json)
+              </button>
+              <label className="mm-menu-item">
+                <Upload size={14} /> Importar mapa (.json)
+                <input type="file" accept="application/json,.json" hidden onChange={e => importMap(e.target.files?.[0])} />
+              </label>
               <hr />
               <button
                 className="mm-menu-item danger"

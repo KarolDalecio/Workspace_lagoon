@@ -47,7 +47,7 @@ npm start          # porta $PORT (padrão 3001)
 | Variável | Para quê |
 |---|---|
 | `PORT` | Porta do servidor (no Docker: 8080) |
-| `DATABASE_URL` | Postgres para mapas, chat e imagens enviadas. Sem ela, salva em `data/` |
+| `DATABASE_URL` | Postgres para mapas, chat e imagens enviadas (também aceita `POSTGRES_URL`, `POSTGRESQL_URL` ou as variáveis `PGHOST`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`). **Sem ela, salva dentro do container e tudo se perde no próximo deploy** |
 | `BASE_PATH` | **No build.** Prefixo público quando o app fica num subcaminho (ex.: `/workspace/`) |
 
 As tabelas (`spaces` e `uploads`) são criadas sozinhas na primeira inicialização.
@@ -58,7 +58,10 @@ As tabelas (`spaces` e `uploads`) são criadas sozinhas na primeira inicializaç
 2. **App → Environment:** adicione `DATABASE_URL=<a URL interna do passo 1>`.
 3. **App → General → Build Type:** *Dockerfile*, com Docker File `Dockerfile` e Context Path `.` (os padrões). O Dockerfile já usa `BASE_PATH=/workspace/`; para outro caminho, defina o build arg `BASE_PATH`.
 4. **App → Domains:** Host `gprgai.top`, Path `/workspace`, Internal Path `/`, **Strip Path ligado**, Container Port `8080`, HTTPS com Let's Encrypt.
-5. Faça o deploy e abra https://gprgai.top/workspace. `https://gprgai.top/workspace/health` mostra `"storage":"postgres"` quando o banco está ligado.
+5. Faça o deploy e abra https://gprgai.top/workspace.
+6. **Confira o banco:** https://gprgai.top/workspace/health precisa mostrar `"storage":"postgres","persistent":true`. Se mostrar `"arquivos"`, a variável não chegou ao app — revise o passo 2 e faça o deploy de novo (o log do app também mostra um aviso ⚠️).
+
+**Backup:** no Mapmaker, menu ☰ → *Baixar mapa (.json)* guarda uma cópia do espaço; *Importar mapa (.json)* restaura (só quem tem acesso às áreas trancadas pode importar).
 
 > WebRTC exige HTTPS (o Let's Encrypt resolve). Para usuários atrás de NAT restritivo (redes corporativas, 4G), configure um servidor TURN (ex.: coturn) em `client/src/rtc/peers.ts`.
 

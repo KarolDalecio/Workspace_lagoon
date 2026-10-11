@@ -99,6 +99,8 @@ export interface ClientToServer {
   'rtc:signal': (s: { to: string; data: SignalData }) => void;
   'map:edit': (edit: MapEdit) => void;
   'map:reset': () => void;
+  /** Substitui o mapa do espaço por um exportado antes (backup .json). */
+  'map:import': (map: unknown) => void;
   'desk:claim': (key: string) => void;
   'desk:release': () => void;
 }

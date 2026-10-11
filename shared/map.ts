@@ -10,7 +10,7 @@ export const FLAG_EFFECTS = ['impassable', 'spawn', 'spotlight'] as const;
 export type FlagEffect = (typeof FLAG_EFFECTS)[number];
 export type EffectKind = FlagEffect | 'private' | 'portal';
 
-export const INTERACTION_KINDS = ['embed', 'video', 'image', 'link', 'note'] as const;
+export const INTERACTION_KINDS = ['embed', 'video', 'image', 'link', 'note', 'music'] as const;
 
 /** O que acontece ao apertar X perto de um objeto. */
 export interface Interaction {
@@ -108,7 +108,7 @@ export interface SpaceMap {
   version?: number;
 }
 
-export const MAP_VERSION = 5;
+export const MAP_VERSION = 6;
 
 
 type Tiles<T> = { x: number; y: number; value: T }[];
@@ -177,15 +177,25 @@ export function objectAt(room: Room, x: number, y: number) {
   return null;
 }
 
-/** Objeto interativo ao alcance de quem está em (x, y): encostado ou em cima, inclusive na diagonal. */
-export function interactionNear(room: Room, x: number, y: number) {
+/**
+ * Objeto interativo ao alcance de quem está em (x, y): encostado ou em cima, inclusive na diagonal.
+ * Com vários ao alcance, vence o mais perto; empatando, o que está à frente do avatar (`facing`).
+ */
+export function interactionNear(room: Room, x: number, y: number, facing?: { x: number; y: number }) {
   let best: PlacedObject | null = null;
+  let bestScore = Infinity;
   for (const o of room.objects) {
     if (!o.interaction) continue;
     const f = footprint(o);
     const dx = Math.max(f.x - x, 0, x - (f.x + f.w - 1));
     const dy = Math.max(f.y - y, 0, y - (f.y + f.h - 1));
-    if (dx <= 1 && dy <= 1) best = o;
+    if (dx > 1 || dy > 1) continue;
+    const ahead = facing && facing.x >= f.x && facing.x < f.x + f.w && facing.y >= f.y && facing.y < f.y + f.h;
+    const score = (dx + dy) * 2 - (ahead ? 1 : 0);
+    if (score <= bestScore) {
+      best = o;
+      bestScore = score;
+    }
   }
   return best;
 }
@@ -478,6 +488,9 @@ function focusPods(b: Builder) {
   b.put('plaque', 24, 7, { label: 'FOCUS' });
 }
 
+/** Vitrola do Guilherme: toca para quem estiver na sala dele. */
+const VITROLA: Interaction = { kind: 'music', title: 'Vitrola', url: '/static/vitrola.mp3' };
+
 const WELCOME: Interaction = {
   kind: 'note',
   title: 'Mural de boas-vindas',
@@ -658,7 +671,7 @@ function officeRoom(id: string, name: string, auditorium?: string) {
 
   // Sala do Guilherme: vitrola, quadros, setup de 5 monitores, Hachi, 3 luminárias e laguinho de pesca
   guilhermeDesk(b);
-  b.put('turntable', 55, 4);
+  b.put('turntable', 55, 4, { interaction: VITROLA });
   b.put('chair', 59, 5, { rot: 2, color: 0 });
   b.put('lamp', 61, 7);
   b.put('lamp', 55, 7, { color: 1 });
@@ -668,7 +681,7 @@ function officeRoom(id: string, name: string, auditorium?: string) {
   b.floor(59, 10, 3, 3, 'water');
   b.flag('impassable', 59, 10, 3, 3);
   b.put('rock', 61, 9, { color: 1 });
-  b.put('fishingrod', 58, 11, { interaction: { kind: 'note', title: 'Laguinho de pesca', text: '🎣 Pescaria do Guilherme. O Hachi sempre fica de olho nos peixes.' } });
+  b.put('fishingrod', 58, 11);
   b.put('flowers', 58, 12);
   b.area('Sala do Guilherme', 55, 4, 7, 9, false, OWNERS);
   b.put('cabinet', 61, 14, { color: 1 });
@@ -812,7 +825,7 @@ function cleanStr(v: unknown, max: number) {
 /** URLs http(s) ou arquivos enviados ao próprio servidor (/uploads/...). */
 export function cleanUrl(v: unknown) {
   const s = cleanStr(v, 600);
-  if (/^\/uploads\/[\w.-]+$/.test(s)) return s;
+  if (/^\/(uploads|static)\/[\w.-]+$/.test(s)) return s;
   try {
     const u = new URL(s);
     return u.protocol === 'https:' || u.protocol === 'http:' ? u.toString() : '';
@@ -1184,6 +1197,21 @@ export function migrateMap(map: SpaceMap): boolean {
     }
     for (const room of Object.values(map.rooms))
       for (const o of room.objects) if (o.type === 'frame' && o.x === 3 && o.y === 3 && !o.art) o.art = 'cafe';
+  }
+  if (from < 6) {
+    // v6: vitrola toca música, laguinho pesca peixes e o Hachi passeia pela sala.
+    for (const room of Object.values(map.rooms)) {
+      if (!room.areaMeta['Sala do Guilherme']) continue;
+      const vitrola = room.objects.find(o => o.type === 'turntable' && o.x === 55 && o.y === 4);
+      if (vitrola && !vitrola.interaction) vitrola.interaction = { ...VITROLA };
+      const rod = room.objects.find(o => o.type === 'fishingrod' && o.x === 58 && o.y === 11);
+      if (rod?.interaction?.kind === 'note') delete rod.interaction;
+      for (const dog of room.objects)
+        if (dog.type === 'dog') {
+          delete room.impassable[tileKey(dog.x, dog.y)];
+          if (dog.rot !== 1 && dog.rot !== 3) dog.rot = 1;
+        }
+    }
   }
   map.version = MAP_VERSION;
   return true;

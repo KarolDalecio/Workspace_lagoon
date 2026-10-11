@@ -56,6 +56,7 @@ npm start          # porta $PORT (padrão 3001)
 | `SUPABASE_URL` | URL do projeto Supabase usado para o login (ex.: `https://<id>.supabase.co`) |
 | `SUPABASE_ANON_KEY` | Chave **anon / publishable** do Supabase (pública). **Nunca** a service role — o app recusa |
 | `ALLOWED_USERS` | Quem pode entrar: `email=Pessoa,email2=Pessoa`. Vários e-mails da mesma pessoa compartilham salas trancadas e mesa |
+| `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL` | Servidor TURN para áudio/vídeo (ex.: `turn:turn.exemplo.com:3478,turns:turn.exemplo.com:443`). Sem TURN, quem está atrás de CGNAT (4G, muitas fibras residenciais) pode não ouvir os outros. Alternativa: `ICE_SERVERS` com a lista JSON completa |
 
 **Em produção, sem `SUPABASE_URL` + `SUPABASE_ANON_KEY` + `ALLOWED_USERS` o app fica fechado** (nunca abre sem login). Localmente (`npm run dev`) o login fica desligado.
 

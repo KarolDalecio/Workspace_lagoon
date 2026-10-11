@@ -1,4 +1,4 @@
-import { isWalkable, type Room } from '../../../shared/map';
+import { isWalkable, type Room } from './map';
 
 export interface Point {
   x: number;

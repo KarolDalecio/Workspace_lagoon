@@ -1,10 +1,8 @@
-import type { IceCandidate, SessionDescription, SignalData } from '../../../shared/types';
+import type { IceCandidate, IceServer, SessionDescription, SignalData } from '../../../shared/types';
 import type { AppSocket } from '../world';
 import type { Kind, LocalMedia } from './media';
 
-const ICE: RTCConfiguration = {
-  iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }],
-};
+const DEFAULT_ICE: IceServer[] = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
 
 interface Peer {
   pc: RTCPeerConnection;
@@ -25,6 +23,8 @@ export class PeerManager {
     private selfId: string,
     private media: LocalMedia,
     private onChange: () => void,
+    /** STUN/TURN vindos do servidor (TURN é o que salva conexões atrás de CGNAT). */
+    private iceServers: IceServer[] = DEFAULT_ICE,
   ) {
     socket.on('rtc:signal', this.onSignal);
     socket.on('player:left', this.onLeft);
@@ -66,7 +66,7 @@ export class PeerManager {
   }
 
   private create(id: string): Peer {
-    const pc = new RTCPeerConnection(ICE);
+    const pc = new RTCPeerConnection({ iceServers: this.iceServers.length ? this.iceServers : DEFAULT_ICE });
     const peer: Peer = { pc, stream: new MediaStream(), pending: [] };
     pc.onicecandidate = e => {
       if (e.candidate) this.send(id, { candidate: e.candidate.toJSON() as IceCandidate });
@@ -78,6 +78,7 @@ export class PeerManager {
     };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed' && this.peers.get(id)?.pc === pc) {
+        console.warn(`Conexão de áudio/vídeo com ${id} falhou (rede bloqueando P2P? configure TURN no servidor).`);
         this.close(id);
         this.cooldown.set(id, Date.now() + 3000);
       }

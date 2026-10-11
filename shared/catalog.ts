@@ -99,7 +99,8 @@ export const CATALOG: Record<string, ObjectDef> = {
   cat: { name: 'Gato', category: 'decoracao', w: 1, h: 1, colors: ['#4a4a4a', '#f0a73a', '#f2f2f2'], blocks: true, keywords: 'pet animal' },
   videogame: { name: 'Videogame', category: 'decoracao', w: 1, h: 1, colors: ['#f2f2f2', '#3a3f4f'], blocks: false, keywords: 'console controle jogos' },
   turntable: { name: 'Vitrola', category: 'decoracao', w: 1, h: 1, colors: ['#6b4423', '#3a3f4f'], blocks: true, keywords: 'disco música toca-discos' },
-  dog: { name: 'Cachorro', category: 'decoracao', w: 1, h: 1, colors: ['#d9a066', '#f2f2f2', '#3a3f4f', '#1c1c22'], blocks: true, label: 'Doguinho', keywords: 'pet animal akita pastor tricolor' },
+  /** Pets andam sozinhos pela área privada em que estão (por isso não bloqueiam passagem). */
+  dog: { name: 'Cachorro', category: 'decoracao', w: 1, h: 1, colors: ['#d9a066', '#f2f2f2', '#3a3f4f', '#1c1c22'], rotations: [1, 3], blocks: false, label: 'Doguinho', keywords: 'pet animal akita pastor tricolor' },
   dogbed: { name: 'Caminha de pet', category: 'decoracao', w: 1, h: 1, colors: ['#5b6ee1', '#e15b64', '#2fb380', '#8a5a3c'], blocks: false, keywords: 'cachorro gato cama almofada' },
   fishingrod: { name: 'Vara de pesca', category: 'natureza', w: 1, h: 1, colors: ['#6b4423'], blocks: false, keywords: 'pescaria lago' },
   frame: { name: 'Quadro decorativo', category: 'decoracao', w: 1, h: 1, colors: ['#c99a62', '#3a3f4f', '#f2f2f2'], blocks: true, art: true, keywords: 'pintura arte pixel' },

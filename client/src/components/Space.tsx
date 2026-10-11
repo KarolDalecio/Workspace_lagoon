@@ -1,5 +1,6 @@
 import {
   Armchair,
+  ChevronUp,
   Hammer,
   Link2,
   LogOut,
@@ -15,7 +16,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { Interaction } from '../../../shared/map';
 import { EMOTES } from '../../../shared/types';
 import { Engine, type Focus, type Place } from '../game/engine';
@@ -25,7 +26,8 @@ import type { World } from '../world';
 import type { Avatar } from '../../../shared/types';
 import { AvatarEditor } from './AvatarEditor';
 import { AvatarPreview } from './AvatarPreview';
-import { DeviceSettings } from './DeviceSettings';
+import { useMusic } from '../music';
+import { DeviceMenu, DeviceSettings } from './DeviceSettings';
 import { InteractionModal } from './InteractionModal';
 import { Mapmaker } from './Mapmaker';
 import { ChatPanel, PeoplePanel } from './Panels';
@@ -47,7 +49,7 @@ export function Space({
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
-  const [peers] = useState(() => new PeerManager(world.socket, world.selfId, media, world.notify));
+  const [peers] = useState(() => new PeerManager(world.socket, world.selfId, media, world.notify, world.iceServers));
   const [mediaEls] = useState(() => new Map<string, HTMLMediaElement>());
   const [place, setPlace] = useState<Place>({ area: null, spotlight: false });
   const [mapmaker, setMapmaker] = useState(false);
@@ -60,6 +62,31 @@ export function Space({
   const [seenChat, setSeenChat] = useState(world.chat.length);
   const [toast, setToast] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(true);
+  const [deviceMenu, setDeviceMenu] = useState<'audio' | 'video' | null>(null);
+  const closeDeviceMenu = useCallback(() => setDeviceMenu(null), []);
+  /** O navegador bloqueou o som porque ainda não houve clique/tecla na página. */
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  const onAudioBlocked = useCallback(() => setAudioBlocked(true), []);
+  useMusic(world, onAudioBlocked);
+
+  // Qualquer clique ou tecla libera o som (vozes e música) — não precisa achar o botão.
+  useEffect(() => {
+    if (!audioBlocked) return;
+    const unlock = () => {
+      setAudioBlocked(false);
+      for (const el of mediaEls.values())
+        if (el.paused)
+          el.play().catch((err: DOMException) => {
+            if (err.name === 'NotAllowedError') setAudioBlocked(true);
+          });
+    };
+    window.addEventListener('pointerdown', unlock, true);
+    window.addEventListener('keydown', unlock, true);
+    return () => {
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+    };
+  }, [audioBlocked, mediaEls]);
 
   useEffect(() => {
     media.onTrack = (kind, track) => peers.replaceTrack(kind, track);
@@ -113,8 +140,17 @@ export function Space({
       world.socket.emit('vehicle:dismount');
       return;
     }
+    if (f.type === 'pet') {
+      world.socket.emit('pet', f.obj.id);
+      return;
+    }
+    if (f.type === 'fish') {
+      world.socket.emit('fish', { x: f.x, y: f.y });
+      return;
+    }
     if (f.type === 'interaction') {
-      if (f.obj.interaction?.kind === 'link' && f.obj.interaction.url) window.open(f.obj.interaction.url, '_blank', 'noopener');
+      if (f.obj.interaction?.kind === 'music') world.socket.emit('music:toggle', f.obj.id);
+      else if (f.obj.interaction?.kind === 'link' && f.obj.interaction.url) window.open(f.obj.interaction.url, '_blank', 'noopener');
       else if (f.obj.interaction) setModal(f.obj.interaction);
     } else if (!f.claim) {
       world.claimDesk(f.area);
@@ -140,6 +176,28 @@ export function Space({
       return (
         <>
           🛴 No patinete · aperte <kbd>X</kbd> para descer
+        </>
+      );
+    if (f.type === 'pet')
+      return (
+        <>
+          🐶 Aperte <kbd>X</kbd> para fazer carinho {f.obj.label ? <>no <strong>{f.obj.label}</strong></> : 'no doguinho'}
+        </>
+      );
+    if (f.type === 'fish')
+      return (
+        <>
+          🎣 Aperte <kbd>X</kbd> para pescar
+        </>
+      );
+    if (f.type === 'interaction' && f.obj.interaction?.kind === 'music')
+      return world.music.has(f.obj.id) ? (
+        <>
+          🎵 Tocando · aperte <kbd>X</kbd> para parar a <strong>{f.obj.interaction.title}</strong>
+        </>
+      ) : (
+        <>
+          🎵 Aperte <kbd>X</kbd> para tocar a <strong>{f.obj.interaction.title}</strong>
         </>
       );
     if (f.type === 'interaction')
@@ -181,7 +239,8 @@ export function Space({
     <div className="space">
       <div className="stage">
         <canvas ref={canvasRef} className="game" />
-        {!mapmaker && <VideoStrip world={world} peers={peers} media={media} mediaEls={mediaEls} />}
+        {!mapmaker && <VideoStrip world={world} peers={peers} media={media} mediaEls={mediaEls} onAutoplayBlocked={onAudioBlocked} />}
+        {audioBlocked && <div className="unlock-audio">🔇 O navegador pausou o som — clique em qualquer lugar para ouvir</div>}
         {mapmaker && (
           <Mapmaker world={world} engine={engineRef.current} onClose={() => setMapmaker(false)} onToast={setToast} />
         )}
@@ -265,20 +324,40 @@ export function Space({
         </div>
 
         <div className="tb-group">
-          <button
-            className={`round ${media.audioOn ? '' : 'off'}`}
-            onClick={() => media.setAudio(!media.audioOn)}
-            title={media.audioOn ? 'Desligar microfone' : 'Ligar microfone'}
-          >
-            {media.audioOn ? <Mic size={18} /> : <MicOff size={18} />}
-          </button>
-          <button
-            className={`round ${media.videoOn ? '' : 'off'}`}
-            onClick={() => media.setVideo(!media.videoOn)}
-            title={media.videoOn ? 'Desligar câmera' : 'Ligar câmera'}
-          >
-            {media.videoOn ? <Video size={18} /> : <VideoOff size={18} />}
-          </button>
+          <div className="media-btn">
+            <button
+              className={`round ${media.audioOn ? '' : 'off'}`}
+              onClick={() => media.setAudio(!media.audioOn)}
+              title={media.audioOn ? 'Desligar microfone' : 'Ligar microfone'}
+            >
+              {media.audioOn ? <Mic size={18} /> : <MicOff size={18} />}
+            </button>
+            <button
+              className={`chevron ${deviceMenu === 'audio' ? 'active' : ''}`}
+              onClick={() => setDeviceMenu(m => (m === 'audio' ? null : 'audio'))}
+              title="Escolher e testar microfone"
+            >
+              <ChevronUp size={13} />
+            </button>
+            {deviceMenu === 'audio' && <DeviceMenu media={media} kind="audio" onClose={closeDeviceMenu} />}
+          </div>
+          <div className="media-btn">
+            <button
+              className={`round ${media.videoOn ? '' : 'off'}`}
+              onClick={() => media.setVideo(!media.videoOn)}
+              title={media.videoOn ? 'Desligar câmera' : 'Ligar câmera'}
+            >
+              {media.videoOn ? <Video size={18} /> : <VideoOff size={18} />}
+            </button>
+            <button
+              className={`chevron ${deviceMenu === 'video' ? 'active' : ''}`}
+              onClick={() => setDeviceMenu(m => (m === 'video' ? null : 'video'))}
+              title="Escolher e testar câmera"
+            >
+              <ChevronUp size={13} />
+            </button>
+            {deviceMenu === 'video' && <DeviceMenu media={media} kind="video" onClose={closeDeviceMenu} />}
+          </div>
           <button
             className={`round ${media.screenOn ? 'active' : ''}`}
             onClick={() => media.toggleScreen()}

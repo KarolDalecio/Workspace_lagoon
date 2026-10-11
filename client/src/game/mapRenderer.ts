@@ -194,7 +194,8 @@ export function renderRoom(room: Room, scale: number, canvas: HTMLCanvasElement,
     const img = getImage(room.background, onImage);
     if (img) ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight);
   }
-  const sorted = [...room.objects].sort((a, b) => footprint(a).y + footprint(a).h - (footprint(b).y + footprint(b).h));
+  // Pets andam pela sala: o motor desenha eles junto com os avatares.
+  const sorted = room.objects.filter(o => o.type !== 'dog').sort((a, b) => footprint(a).y + footprint(a).h - (footprint(b).y + footprint(b).h));
   for (const o of sorted) drawObject(ctx, o);
   return canvas;
 }

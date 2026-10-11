@@ -9,7 +9,7 @@ export function apiPath(path: string) {
   return BASE + path.replace(/^\//, '');
 }
 
-/** Imagens enviadas ficam salvas no mapa como "/uploads/…"; no navegador ganham o prefixo. */
+/** Arquivos enviados ("/uploads/…") e embutidos ("/static/…") ganham o prefixo no navegador. */
 export function assetUrl(url: string) {
-  return url.startsWith('/uploads/') ? apiPath(url) : url;
+  return url.startsWith('/uploads/') || url.startsWith('/static/') ? apiPath(url) : url;
 }

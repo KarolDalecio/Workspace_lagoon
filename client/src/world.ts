@@ -5,6 +5,8 @@ import type {
   ChatMessage,
   ChatScope,
   ClientToServer,
+  Fx,
+  IceServer,
   JoinRequest,
   JoinResponse,
   PlayerAction,
@@ -42,6 +44,13 @@ export class World {
   mapVersion = 0;
   /** Avisos do servidor (sala trancada, edição negada…). */
   onNotice?: (text: string) => void;
+  /** Vitrolas tocando: objeto → início (ms, relógio do servidor). */
+  music = new Map<string, number>();
+  /** Diferença relógio do servidor − relógio local, estimada no join. */
+  clockSkew = 0;
+  iceServers: IceServer[];
+  /** Efeitos passageiros na tela (peixe, coração), com o instante local em que começaram. */
+  fx: (Fx & { born: number })[] = [];
   /** Edições inversas para desfazer/refazer (só as feitas por esta pessoa). */
   private undoStack: MapEdit[] = [];
   private redoStack: MapEdit[] = [];
@@ -62,6 +71,27 @@ export class World {
     this.chat = res.chat;
     this.map = res.map;
     this.ownerTag = res.ownerTag;
+    this.iceServers = res.iceServers ?? [];
+    if (res.serverTime) this.clockSkew = res.serverTime - Date.now();
+    for (const [id, at] of Object.entries(res.music ?? {})) this.music.set(id, at);
+
+    socket.on('music:state', ({ id, startedAt }) => {
+      if (startedAt === null) this.music.delete(id);
+      else this.music.set(id, startedAt);
+      this.notify();
+    });
+    socket.on('fx', e => {
+      this.fx.push({ ...e, born: performance.now() });
+      if (this.fx.length > 30) this.fx.shift();
+    });
+    // Pet passeando: move o objeto sem redesenhar o cenário (ele é desenhado à parte).
+    socket.on('npc:move', ({ room, id, x, y, rot }) => {
+      const obj = this.map.rooms[room]?.objects.find(o => o.id === id);
+      if (!obj) return;
+      obj.x = x;
+      obj.y = y;
+      obj.rot = rot;
+    });
 
     socket.on('map:edited', edit => {
       applyEdit(this.map, edit);

@@ -26,8 +26,9 @@ import type { PeerManager } from '../rtc/peers';
 import type { World } from '../world';
 import { drawAvatar, drawEmote, drawNameTag, drawSmoke, smokeClock } from './avatar';
 import { getImage, renderRoom } from './mapRenderer';
+import { drawFx } from './fx';
 import { drawObject } from './objects';
-import { findPath, type Point } from './path';
+import { findPath, type Point } from '../../../shared/path';
 
 const STEP_MS = 140;
 /** No patinete cada passo leva menos da metade do tempo. */
@@ -47,7 +48,11 @@ export type Focus =
   | { type: 'interaction'; obj: PlacedObject }
   | { type: 'desk'; room: string; area: string; claim: DeskClaim | null }
   | { type: 'mount'; obj: PlacedObject }
-  | { type: 'dismount' };
+  | { type: 'dismount' }
+  | { type: 'pet'; obj: PlacedObject }
+  | { type: 'fish'; x: number; y: number };
+
+const near = (a: Point, b: Point) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) <= 1;
 
 /** Onde a pessoa está: área privada e/ou holofote. */
 export interface Place {
@@ -126,6 +131,8 @@ export class Engine {
   private staticKey = '';
   private imageVersion = 0;
   private lastLockedNotice = 0;
+  /** Posição desenhada de cada pet (interpola entre os passos que chegam do servidor). */
+  private petPos = new Map<string, { rx: number; ry: number }>();
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -472,6 +479,26 @@ export class Engine {
       }
       p.walk += dt;
     }
+    const room = this.world.map.rooms[this.world.self?.room];
+    for (const o of room?.objects ?? []) {
+      if (o.type !== 'dog') continue;
+      const pos = this.petPos.get(o.id);
+      if (!pos || Math.hypot(o.x - pos.rx, o.y - pos.ry) > 3) {
+        this.petPos.set(o.id, { rx: o.x, ry: o.y });
+        continue;
+      }
+      const dx = o.x - pos.rx;
+      const dy = o.y - pos.ry;
+      const dist = Math.hypot(dx, dy);
+      const speed = dt / 380;
+      if (dist <= speed) {
+        pos.rx = o.x;
+        pos.ry = o.y;
+      } else {
+        pos.rx += (dx / dist) * speed;
+        pos.ry += (dy / dist) * speed;
+      }
+    }
     // Quando o avatar anda, a câmera volta aos poucos a segui-lo pelo centro.
     const me = this.world.self;
     if (me && (Math.abs(me.x - me.rx) > 0.01 || Math.abs(me.y - me.ry) > 0.01) && (this.camOffset.x || this.camOffset.y)) {
@@ -491,11 +518,19 @@ export class Engine {
       if (me.vehicle) focus = { type: 'dismount' };
       else if (desk) focus = { type: 'desk', room: room.id, area: desk, claim: this.world.map.claims[claimKey(room.id, desk)] ?? null };
       else {
-        const obj = interactionNear(room, me.x, me.y);
-        if (obj) focus = { type: 'interaction', obj };
+        const dog = room.objects.find(o => o.type === 'dog' && near(o, me));
+        const obj = interactionNear(room, me.x, me.y, { x: me.x + DELTA[me.dir][0], y: me.y + DELTA[me.dir][1] });
+        const scooter = room.objects.find(o => o.type === 'scooter' && near(o, me));
+        if (dog) focus = { type: 'pet', obj: dog };
+        else if (obj) focus = { type: 'interaction', obj };
+        else if (scooter) focus = { type: 'mount', obj: scooter };
         else {
-          const scooter = room.objects.find(o => o.type === 'scooter' && Math.max(Math.abs(o.x - me.x), Math.abs(o.y - me.y)) <= 1);
-          if (scooter) focus = { type: 'mount', obj: scooter };
+          // Lago ao lado: dá para pescar (prefere a água em frente ao avatar).
+          const [fx, fy] = DELTA[me.dir];
+          const water = [{ x: me.x + fx, y: me.y + fy }, ...[-1, 0, 1].flatMap(dy => [-1, 0, 1].map(dx => ({ x: me.x + dx, y: me.y + dy })))].find(
+            t => room.floor[t.y]?.[t.x] === 'water',
+          );
+          if (water) focus = { type: 'fish', x: water.x, y: water.y };
         }
       }
     }
@@ -653,7 +688,17 @@ export class Engine {
     }
 
     const players = [...this.world.players.values()].filter(p => p.room === room.id).sort((a, b) => a.ry - b.ry);
+    // Pets entram na mesma ordem de profundidade que os avatares.
+    const pets = room.objects
+      .filter(o => o.type === 'dog')
+      .map(o => ({ o, ...(this.petPos.get(o.id) ?? { rx: o.x, ry: o.y }) }))
+      .sort((a, b) => a.ry - b.ry);
+    let pi = 0;
+    const drawPetsUpTo = (y: number) => {
+      for (; pi < pets.length && pets[pi].ry <= y; pi++) drawObject(ctx, pets[pi].o, pets[pi].rx * TILE, pets[pi].ry * TILE);
+    };
     for (const p of players) {
+      drawPetsUpTo(p.ry);
       const px = p.rx * TILE;
       const py = p.ry * TILE;
       if (this.peers.has(p.id)) {
@@ -669,6 +714,7 @@ export class Engine {
         scooter: p.vehicle ? CATALOG.scooter.colors[p.vehicle.color] ?? CATALOG.scooter.colors[0] : undefined,
       });
     }
+    drawPetsUpTo(Infinity);
     for (const p of players) if (p.action === 'smoke') drawSmoke(ctx, p.rx * TILE, p.ry * TILE, p.dir, smokeClock(now, p.id));
 
     // Primeiro plano fica acima dos avatares (ex.: copas de árvores, teto).
@@ -690,6 +736,9 @@ export class Engine {
       if (p.room === room.id) drawEmote(ctx, p.rx * TILE + 16, p.ry * TILE, e.emoji, (e.until - now) / 3000);
     }
 
+    this.world.fx = this.world.fx.filter(e => now - e.born < 2000);
+    for (const e of this.world.fx) if (e.room === room.id) drawFx(ctx, e, (now - e.born) / 1000);
+
     if (this.mm) this.renderMapmaker(room, viewW, viewH);
   }
 
@@ -700,7 +749,8 @@ export class Engine {
     if (this.focus.type === 'desk') {
       const b = areaBounds(room, this.focus.area);
       if (b) this.outline(b, color);
-    } else if (this.focus.type === 'interaction' || this.focus.type === 'mount') this.outline(footprint(this.focus.obj), color);
+    } else if (this.focus.type === 'interaction' || this.focus.type === 'mount' || this.focus.type === 'pet') this.outline(footprint(this.focus.obj), color);
+    else if (this.focus.type === 'fish') this.outline({ x: this.focus.x, y: this.focus.y, w: 1, h: 1 }, color);
   }
 
   private renderMapmaker(room: Room, viewW: number, viewH: number) {

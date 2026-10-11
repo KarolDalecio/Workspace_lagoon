@@ -558,7 +558,9 @@ kbd {
   padding: 10px 14px;
   background: var(--surface);
   border-top: 1px solid var(--border);
-  overflow-x: auto;
+  /* sem overflow: ele cortaria os menus que abrem para cima (emotes, dispositivos) */
+  flex-wrap: wrap;
+  row-gap: 8px;
 }
 
 .tb-group {
@@ -807,4 +809,137 @@ kbd {
 .account small {
   color: var(--muted);
   font-size: 12px;
+}
+
+/* ---------- Setinha de dispositivos (microfone/câmera) ---------- */
+.media-btn {
+  position: relative;
+}
+
+.chevron {
+  position: absolute;
+  right: -5px;
+  top: -5px;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  z-index: 1;
+}
+
+.chevron:hover,
+.chevron.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.device-menu {
+  position: absolute;
+  bottom: 54px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(300px, calc(100vw - 32px));
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dm-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 6px 6px 4px;
+}
+
+.dm-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  font-size: 13px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  color: var(--text);
+}
+
+.dm-item:hover {
+  background: var(--surface-2);
+}
+
+.dm-item.on {
+  font-weight: 600;
+}
+
+.dm-check {
+  width: 14px;
+  flex: none;
+  color: var(--green);
+}
+
+.dm-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 4px 8px;
+}
+
+.dm-test {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px 0 4px;
+  padding: 10px 8px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dm-rec {
+  font-size: 13px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.dm-rec:disabled {
+  opacity: 0.7;
+}
+
+.dm-preview.mirror {
+  transform: scaleX(-1);
+}
+
+.dm-preview {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 10px;
+  background: #000;
+}
+
+.unlock-audio {
+  animation: unlock-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes unlock-pulse {
+  50% {
+    transform: translateX(-50%) scale(1.06);
+  }
 }

@@ -1,5 +1,5 @@
 import { MicOff } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Avatar } from '../../../shared/types';
 import type { LocalMedia } from '../rtc/media';
 import type { PeerManager } from '../rtc/peers';
@@ -83,23 +83,16 @@ export function VideoStrip({
   peers,
   media,
   mediaEls,
+  onAutoplayBlocked,
 }: {
   world: World;
   peers: PeerManager;
   media: LocalMedia;
   mediaEls: Map<string, HTMLMediaElement>;
+  /** O navegador bloqueou o som (falta um clique na página); o Space mostra o aviso. */
+  onAutoplayBlocked: () => void;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [audioBlocked, setAudioBlocked] = useState(false);
-  const onAutoplayBlocked = useCallback(() => setAudioBlocked(true), []);
-
-  function unlockAudio() {
-    setAudioBlocked(false);
-    for (const el of mediaEls.values())
-      el.play().catch((err: DOMException) => {
-        if (err.name === 'NotAllowedError') setAudioBlocked(true);
-      });
-  }
   const me = world.self;
   const others = peers.ids().map(id => world.players.get(id)).filter(p => !!p);
   const expandedStream = expanded === me.id ? media.stream : expanded ? peers.stream(expanded) : null;
@@ -143,11 +136,6 @@ export function VideoStrip({
           />
         ))}
       </div>
-      {audioBlocked && (
-        <button className="unlock-audio" onClick={unlockAudio}>
-          🔇 Clique para ativar o áudio
-        </button>
-      )}
       {expanded && expandedStream && (
         <div className="spotlight" onClick={() => setExpanded(null)}>
           <video ref={expandedRef} autoPlay playsInline muted />

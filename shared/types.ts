@@ -64,6 +64,25 @@ export interface SpaceSummary {
   online: number;
 }
 
+/** Efeito visual passageiro (peixe pulando do lago, coração do pet). */
+export interface Fx {
+  id: string;
+  kind: 'fish' | 'heart';
+  room: string;
+  x: number;
+  y: number;
+  /** Formato do peixe (muda a cada pescaria). */
+  variant: number;
+  color: string;
+}
+
+/** Servidor ICE para o WebRTC (STUN/TURN). */
+export interface IceServer {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
+
 export interface ChatMessage {
   id: string;
   from: string;
@@ -110,6 +129,12 @@ export interface JoinResponse {
   map: SpaceMap;
   /** Hash público do clientKey; comparado com DeskClaim.owner para achar a própria mesa. */
   ownerTag: string;
+  /** Músicas tocando: objeto (vitrola) → quando começou (ms). */
+  music: Record<string, number>;
+  /** STUN/TURN para as conexões de áudio e vídeo. */
+  iceServers: IceServer[];
+  /** Relógio do servidor (ms), para sincronizar a música entre todos. */
+  serverTime: number;
 }
 
 export interface ServerToClient {
@@ -125,6 +150,10 @@ export interface ServerToClient {
   'map:claims': (claims: Record<string, DeskClaim>) => void;
   /** Aviso curto para mostrar à pessoa (ex.: sala trancada, edição negada). */
   notice: (text: string) => void;
+  'music:state': (m: { id: string; startedAt: number | null }) => void;
+  fx: (e: Fx) => void;
+  /** Pet andando sozinho (não passa pelo histórico de edições do mapa). */
+  'npc:move': (m: { room: string; id: string; x: number; y: number; rot: number }) => void;
 }
 
 export interface ClientToServer {
@@ -138,6 +167,12 @@ export interface ClientToServer {
   action: (a: PlayerAction | null) => void;
   'vehicle:mount': (objectId: string) => void;
   'vehicle:dismount': () => void;
+  /** Liga/desliga a música de uma vitrola ao lado. */
+  'music:toggle': (objectId: string) => void;
+  /** Pesca no tile de água ao lado. */
+  fish: (pos: { x: number; y: number }) => void;
+  /** Faz carinho no pet ao lado. */
+  pet: (objectId: string) => void;
   'rtc:signal': (s: { to: string; data: SignalData }) => void;
   'map:edit': (edit: MapEdit) => void;
   'map:reset': () => void;

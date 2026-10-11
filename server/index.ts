@@ -18,13 +18,16 @@ import {
   isWalkable,
   lockedAgainst,
   migrateMap,
+  objectAt,
   spawnTiles,
   tileKey,
   type AreaMeta,
   type MapEdit,
+  type PlacedObject,
   type Room,
   type SpaceMap,
 } from '../shared/map';
+import { findPath, type Point } from '../shared/path';
 import { canHear } from '../shared/proximity';
 import { authMode, bearer, publicAuthConfig, verifyToken, type AuthUser } from './auth';
 import { createStore, type SpaceMeta } from './store';
@@ -35,6 +38,8 @@ import {
   type ChatMessage,
   type ClientToServer,
   type Dir,
+  type Fx,
+  type IceServer,
   type PlayerState,
   type ServerToClient,
 } from '../shared/types';
@@ -51,8 +56,33 @@ interface Space {
   chat: ChatMessage[];
   map: SpaceMap;
   meta: SpaceMeta;
+  /** Vitrolas tocando: objeto → início (ms). */
+  music: Map<string, number>;
+  /** Contador de pescarias (define formato e cor do próximo peixe). */
+  fishCount: number;
   saveTimer?: NodeJS.Timeout;
 }
+
+/**
+ * STUN/TURN para o WebRTC. Sem TURN, conexões entre redes com CGNAT (comum em
+ * internet residencial e 4G) podem não fechar e o áudio não chega.
+ * ICE_SERVERS = JSON com a lista completa, ou TURN_URLS + TURN_USERNAME + TURN_CREDENTIAL.
+ */
+function iceServers(): IceServer[] {
+  const list: IceServer[] = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+  try {
+    if (process.env.ICE_SERVERS) return JSON.parse(process.env.ICE_SERVERS);
+  } catch {
+    console.error('ICE_SERVERS não é um JSON válido; usando só STUN.');
+  }
+  const urls = process.env.TURN_URLS?.split(',').map(u => u.trim()).filter(Boolean);
+  if (urls?.length) list.push({ urls, username: process.env.TURN_USERNAME, credential: process.env.TURN_CREDENTIAL });
+  return list;
+}
+const ICE = iceServers();
+if (ICE.length === 1) console.warn('ℹ️  Sem TURN configurado: áudio/vídeo podem falhar entre redes com CGNAT. Veja TURN_URLS no README.');
+
+const FISH_COLORS = ['#f0a73a', '#e5483a', '#3fb6d6', '#f4d35e', '#8c5bd6', '#2fb380', '#e86a8a', '#5b6ee1'];
 
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
@@ -124,6 +154,73 @@ function scheduleSave(id: string, space: Space) {
   }, 1000);
 }
 
+// ---------- Pets que passeiam (Hachi) ----------
+
+const PET_STEP_MS = 380;
+/** Descanso depois de cada passeio (~2 min, com uma variação para não parecer robô). */
+const PET_REST_MS = () => 110_000 + Math.random() * 20_000;
+const PET_WALK = 7;
+
+interface PetState {
+  path: Point[];
+  restUntil: number;
+}
+const pets = new WeakMap<PlacedObject, PetState>();
+
+/** Tiles onde o pet pode pisar: dentro da mesma área privada, sem água nem móveis (a caminha pode). */
+function petCanStep(room: Room, area: string, dog: PlacedObject) {
+  return (x: number, y: number) => {
+    if (areaAt(room, x, y) !== area || room.floor[y]?.[x] === 'water') return false;
+    const o = objectAt(room, x, y);
+    return !o || o === dog || o.type === 'dogbed' || o.type === 'rug';
+  };
+}
+
+function petTick(id: string, space: Space, now: number) {
+  for (const room of Object.values(space.map.rooms))
+    for (const dog of room.objects) {
+      if (dog.type !== 'dog') continue;
+      const area = areaAt(room, dog.x, dog.y);
+      if (!area) continue; // só passeia dentro de uma sala (ex.: Sala do Guilherme)
+      let st = pets.get(dog);
+      if (!st) pets.set(dog, (st = { path: [], restUntil: now + 5_000 + Math.random() * 10_000 }));
+      if (st.path.length === 0) {
+        if (now < st.restUntil) continue;
+        const canStep = petCanStep(room, area, dog);
+        const bed = room.objects.find(o => o.type === 'dogbed' && areaAt(room, o.x, o.y) === area);
+        // de vez em quando volta para a caminha; senão escolhe um lugar perto
+        let target: Point | null = bed && Math.random() < 0.3 && (bed.x !== dog.x || bed.y !== dog.y) ? { x: bed.x, y: bed.y } : null;
+        for (let tries = 0; !target && tries < 20; tries++) {
+          const t = { x: dog.x + Math.round((Math.random() * 2 - 1) * PET_WALK), y: dog.y + Math.round((Math.random() * 2 - 1) * PET_WALK) };
+          if ((t.x !== dog.x || t.y !== dog.y) && isWalkable(room, t.x, t.y) && canStep(t.x, t.y)) target = t;
+        }
+        st.path = target ? findPath(room, dog.x, dog.y, target.x, target.y, false, canStep).slice(0, PET_WALK * 2) : [];
+        if (st.path.length === 0) st.restUntil = now + 15_000;
+        continue;
+      }
+      const next = st.path.shift()!;
+      if (!isWalkable(room, next.x, next.y) || areaAt(room, next.x, next.y) !== area) {
+        st.path = [];
+        st.restUntil = now + 15_000;
+        continue;
+      }
+      // o cachorro só tem perfil para os lados: vira para onde está andando
+      if (next.x !== dog.x) dog.rot = next.x > dog.x ? 1 : 3;
+      dog.x = next.x;
+      dog.y = next.y;
+      io.to(id).emit('npc:move', { room: room.id, id: dog.id, x: dog.x, y: dog.y, rot: dog.rot });
+      if (st.path.length === 0) {
+        st.restUntil = now + PET_REST_MS();
+        scheduleSave(id, space);
+      }
+    }
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, space] of spaces) if (space.players.size > 0) petTick(id, space, now);
+}, PET_STEP_MS).unref();
+
 /**
  * Carrega um espaço. Se não existir, só cria quando `createAs` (nome) é passado;
  * senão retorna null (ninguém cria espaço só por digitar uma URL).
@@ -137,7 +234,14 @@ async function getSpace(id: string, createAs?: string): Promise<Space | null> {
       const saved = await store.loadSpace(id);
       if (!saved && !createAs) return null as unknown as Space;
       const meta = saved?.meta ?? { name: createAs ?? id, code: await newCode() };
-      const space: Space = { players: new Map(), chat: saved?.chat.slice(-CHAT_HISTORY) ?? [], map: restoreMap(saved?.map), meta };
+      const space: Space = {
+        players: new Map(),
+        chat: saved?.chat.slice(-CHAT_HISTORY) ?? [],
+        map: restoreMap(saved?.map),
+        meta,
+        music: new Map(),
+        fishCount: 0,
+      };
       spaces.set(id, space);
       const migrated = saved ? migrateMap(space.map) : false;
       if (migrated) {
@@ -453,6 +557,9 @@ io.on('connection', socket => {
       chat: space.chat,
       map: space.map,
       ownerTag,
+      music: Object.fromEntries(space.music),
+      iceServers: ICE,
+      serverTime: Date.now(),
     });
     socket.to(spaceId).emit('player:joined', player);
   });
@@ -574,6 +681,50 @@ io.on('connection', socket => {
     const p = me();
     const space = current();
     if (p && space && spaceId) parkVehicle(space, p);
+  });
+
+  /** Pega um objeto da sala da pessoa que esteja colado nela (inclusive na diagonal). */
+  function objectNear(objectId: unknown, accept: (o: { type: string; interaction?: { kind: string } }) => boolean) {
+    const p = me();
+    const space = current();
+    if (!p || !space || typeof objectId !== 'string') return null;
+    const room = space.map.rooms[p.room];
+    const obj = room?.objects.find(o => o.id === objectId && accept(o));
+    return obj && Math.max(Math.abs(obj.x - p.x), Math.abs(obj.y - p.y)) <= 1 ? { p, space, room: room!, obj } : null;
+  }
+
+  let lastFx = 0;
+  function emitFx(space: Space, fx: Omit<Fx, 'id'>) {
+    const now = Date.now();
+    if (now - lastFx < 500) return; // evita enxurrada de efeitos
+    lastFx = now;
+    io.to(spaceId!).emit('fx', { ...fx, id: randomUUID() });
+  }
+
+  socket.on('music:toggle', objectId => {
+    const hit = objectNear(objectId, o => o.interaction?.kind === 'music');
+    if (!hit) return;
+    const { space, obj } = hit;
+    const playing = space.music.has(obj.id);
+    if (playing) space.music.delete(obj.id);
+    else space.music.set(obj.id, Date.now());
+    io.to(spaceId!).emit('music:state', { id: obj.id, startedAt: playing ? null : space.music.get(obj.id)! });
+  });
+
+  socket.on('fish', pos => {
+    const p = me();
+    const space = current();
+    const room = p && space ? space.map.rooms[p.room] : undefined;
+    if (!p || !space || !room || !pos || !Number.isInteger(pos.x) || !Number.isInteger(pos.y)) return;
+    if (room.floor[pos.y]?.[pos.x] !== 'water' || Math.max(Math.abs(pos.x - p.x), Math.abs(pos.y - p.y)) > 1) return;
+    const n = space.fishCount++;
+    // formato e cor mudam a cada pescaria (ciclos de tamanhos diferentes para não repetir o par)
+    emitFx(space, { kind: 'fish', room: room.id, x: pos.x, y: pos.y, variant: n % 4, color: FISH_COLORS[(n * 3) % FISH_COLORS.length] });
+  });
+
+  socket.on('pet', objectId => {
+    const hit = objectNear(objectId, o => o.type === 'dog');
+    if (hit) emitFx(hit.space, { kind: 'heart', room: hit.room.id, x: hit.obj.x, y: hit.obj.y, variant: 0, color: '#e5483a' });
   });
 
   socket.on('map:edit', (edit: MapEdit) => {

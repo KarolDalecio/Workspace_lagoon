@@ -47,7 +47,7 @@ import {
 } from '../../../shared/map';
 import type { Engine, MapmakerView, PointerInfo } from '../game/engine';
 import { drawFloor } from '../game/mapRenderer';
-import type { Point } from '../game/path';
+import type { Point } from '../../../shared/path';
 import type { World } from '../world';
 import { ObjectIcon, ObjectPicker, rotateStamp, type StampItem } from './ObjectPicker';
 import { authHeaders } from '../auth';
@@ -246,6 +246,7 @@ const INTERACTION_LABELS: Record<Interaction['kind'], string> = {
   image: 'Imagem',
   link: 'Link externo / chamada (abre em nova aba)',
   note: 'Nota de texto',
+  music: 'Música (toca para quem está na mesma área)',
 };
 
 function InteractionForm({ obj, onSave }: { obj: PlacedObject; onSave: (value: Interaction | null) => void }) {
@@ -295,6 +296,9 @@ function InteractionForm({ obj, onSave }: { obj: PlacedObject; onSave: (value: I
           <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={e => onFile(e.target.files?.[0])} disabled={busy} />
           {form.url && <img src={assetUrl(form.url)} alt="" className="thumb" />}
         </label>
+      )}
+      {form.kind === 'music' && (
+        <p className="hint">Use um link direto para um arquivo de áudio (.mp3) ou /static/vitrola.mp3.</p>
       )}
       {form.kind !== 'note' && form.kind !== 'image' && (
         <label>

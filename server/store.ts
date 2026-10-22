@@ -258,7 +258,36 @@ export class PgStore implements Store {
     }
   }
 
+  /**
+   * Antes de qualquer migração, guarda uma cópia (uma por dia) das tabelas deste app, antigas e _wa,
+   * em backup_wa_<tabela>_<AAAAMMDD>. Nunca apaga nada; RLS ligado como nas outras.
+   */
+  private async backupTables() {
+    const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    for (const [table, { required }] of Object.entries(LEGACY_TABLES))
+      for (const name of [table, `${table}_wa`]) {
+        const { rows } = await this.pool.query(
+          `SELECT array_agg(column_name::text) AS cols FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
+          [name],
+        );
+        const cols = rows[0]?.cols as string[] | null;
+        if (!cols || !required.every(c => cols.includes(c))) continue; // não existe ou não é deste app
+        const backup = `backup_wa_${name.replace(/_wa$/, '')}${name.endsWith('_wa') ? '_novo' : ''}_${day}`;
+        try {
+          const created = await this.pool.query(`SELECT to_regclass($1) IS NULL AS missing`, [`public.${backup}`]);
+          if (!created.rows[0].missing) continue;
+          await this.pool.query(`CREATE TABLE public.${backup} AS TABLE public.${name}`);
+          await this.pool.query(`ALTER TABLE public.${backup} ENABLE ROW LEVEL SECURITY`);
+          const { rows: n } = await this.pool.query(`SELECT count(*)::int AS n FROM public.${backup}`);
+          console.log(`Backup: "${name}" → "${backup}" (${n[0].n} linha(s)).`);
+        } catch (err) {
+          console.error(`Falha no backup de "${name}":`, (err as Error).message);
+        }
+      }
+  }
+
   async init() {
+    await this.backupTables();
     await this.renameLegacyTables();
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS spaces_wa (

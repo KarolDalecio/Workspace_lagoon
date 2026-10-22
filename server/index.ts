@@ -320,6 +320,30 @@ function keepWhiteboards(from: SpaceMap, to: SpaceMap) {
 }
 
 const app = express();
+
+// Express 4 não trata erros de rotas async: sem isto, uma falha no banco deixa a
+// requisição sem resposta (ou derruba o processo). Encaminha para o handler de erro.
+for (const method of ['get', 'post', 'put', 'delete'] as const) {
+  const original = app[method].bind(app) as (...args: unknown[]) => unknown;
+  (app as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => {
+    if (args.length < 2) return original(...args); // app.get('setting')
+    return original(
+      ...args.map(h =>
+        typeof h === 'function' && h.length < 4
+          ? (req: express.Request, res: express.Response, next: express.NextFunction) => {
+              try {
+                const out = h(req, res, next);
+                if (out && typeof (out as Promise<unknown>).catch === 'function') (out as Promise<unknown>).catch(next);
+              } catch (err) {
+                next(err);
+              }
+            }
+          : h,
+      ),
+    );
+  };
+}
+process.on('unhandledRejection', err => console.error('Erro não tratado:', err));
 const server = createServer(app);
 const io = new Server<ClientToServer, ServerToClient, Record<string, never>, { user?: AuthUser }>(server, {
   cors: { origin: true },
@@ -350,7 +374,12 @@ app.get('/api/me', async (req, res) => {
     res.status(401).json({ error: 'Acesso não autorizado para este e-mail.' });
     return;
   }
-  res.json({ ...user, avatar: await store.loadProfile(personKey(user)) });
+  // Sem conseguir ler o avatar no banco, a pessoa ainda entra (com o avatar local).
+  const avatar = await store.loadProfile(personKey(user)).catch(err => {
+    console.error('Falha ao carregar perfil', err);
+    return null;
+  });
+  res.json({ ...user, avatar });
 });
 
 app.put('/api/me/avatar', express.json({ limit: '10kb' }), async (req, res) => {
@@ -401,8 +430,9 @@ app.post('/api/spaces/join', express.json({ limit: '1kb' }), async (req, res) =>
 });
 
 const dist = path.join(ROOT, 'dist');
-app.get('/health', (_req, res) => {
-  res.json({ ok: true, storage: store.kind, persistent: store.persistent, spaces: spaces.size });
+app.get('/health', async (_req, res) => {
+  const database = await Promise.race([store.ping(), new Promise<boolean>(r => setTimeout(() => r(false), 4000))]);
+  res.json({ ok: database, storage: store.kind, persistent: store.persistent, database, spaces: spaces.size, uptime: Math.round(process.uptime()) });
 });
 
 /** Envio de imagens (fundo/primeiro plano das salas e interações de imagem), até 3 MB. */
@@ -435,6 +465,10 @@ app.get('/uploads/:name', async (req, res) => {
 });
 app.use(express.static(dist));
 app.get('*', (_req, res, next) => res.sendFile(path.join(dist, 'index.html'), err => err && next()));
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('Erro na requisição:', err);
+  if (!res.headersSent) res.status(500).json({ error: 'Erro interno no servidor.' });
+});
 
 io.on('connection', socket => {
   let spaceId: string | null = null;

@@ -34,6 +34,8 @@ export interface Store {
   /** Sobrevive a um novo deploy/container? */
   persistent: boolean;
   init(): Promise<void>;
+  /** Confere se o armazenamento responde (usado no /health). */
+  ping(): Promise<boolean>;
   loadSpace(id: string): Promise<SavedSpace | null>;
   saveSpace(id: string, map: SpaceMap, chat: ChatMessage[], meta: SpaceMeta): Promise<void>;
   findSpaceByCode(code: string): Promise<string | null>;
@@ -68,6 +70,10 @@ class FileStore implements Store {
     this.spaces = path.join(root, 'data', 'spaces');
     this.uploads = path.join(root, 'data', 'uploads');
     this.metaFile = path.join(root, 'data', 'people.json');
+  }
+
+  async ping() {
+    return true;
   }
 
   async init() {
@@ -173,7 +179,19 @@ export class PgStore implements Store {
 
   /** Sem URL, o driver usa as variáveis PGHOST/PGUSER/PGPASSWORD/PGDATABASE/PGPORT. */
   constructor(url?: string | pg.Pool) {
-    this.pool = url instanceof pg.Pool ? url : new pg.Pool({ connectionString: url || undefined, max: 5 });
+    this.pool = url instanceof pg.Pool ? url : new pg.Pool({ connectionString: url || undefined, max: 5, idleTimeoutMillis: 30_000 });
+    // O pooler do Supabase fecha conexões ociosas; sem este handler o Node derruba o processo.
+    this.pool.on('error', err => console.error('Conexão com o Postgres caiu (o pool reconecta sozinho):', err.message));
+  }
+
+  async ping() {
+    try {
+      await this.pool.query('SELECT 1');
+      return true;
+    } catch (err) {
+      console.error('Postgres não respondeu:', (err as Error).message);
+      return false;
+    }
   }
 
   async init() {

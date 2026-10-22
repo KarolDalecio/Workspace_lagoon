@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Avatar } from '../../shared/types';
 import { autoJoinSpace, localAvatar, saveAvatarRemote, saveLocalAvatar, setAutoJoinSpace } from './api';
-import { currentUser, devAvatar, loadAuthConfig, signOut, type AuthUser } from './auth';
+import { currentUser, devAvatar, isRecovering, loadAuthConfig, signOut, type AuthUser } from './auth';
 import { Home } from './components/Home';
 import { Lobby, enterSpace, type SpaceTarget } from './components/Lobby';
-import { ClosedScreen, Login } from './components/Login';
+import { ClosedScreen, Login, NewPassword } from './components/Login';
 import { Space } from './components/Space';
 import { LocalMedia } from './rtc/media';
 import { UnauthorizedError, type World } from './world';
@@ -13,6 +13,8 @@ type Gate =
   | { state: 'loading' }
   | { state: 'closed'; message: string }
   | { state: 'login'; error?: string | null }
+  /** Veio do link de redefinir senha do e-mail. */
+  | { state: 'recovery' }
   /** user = null quando o login está desligado (só em desenvolvimento). */
   | { state: 'ready'; user: AuthUser | null };
 
@@ -60,6 +62,10 @@ export default function App() {
           ready(null, await devAvatar().catch(() => null));
           return;
         }
+        if (isRecovering()) {
+          setGate({ state: 'recovery' });
+          return;
+        }
         const user = await currentUser();
         if (user) ready(user, user.avatar);
         else setGate({ state: 'login' });
@@ -92,6 +98,22 @@ export default function App() {
 
   if (gate.state === 'loading') return <div className="lobby" />;
   if (gate.state === 'closed') return <ClosedScreen message={gate.message} />;
+  if (gate.state === 'recovery')
+    return (
+      <NewPassword
+        onDone={async () => {
+          try {
+            const user = await currentUser();
+            if (user) {
+              ready(user, user.avatar);
+              setScreen(firstScreen());
+            } else setGate({ state: 'login' });
+          } catch (err) {
+            setGate({ state: 'login', error: (err as Error).message });
+          }
+        }}
+      />
+    );
   if (gate.state === 'login')
     return (
       <Login

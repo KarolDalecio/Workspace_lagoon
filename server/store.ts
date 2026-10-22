@@ -172,6 +172,14 @@ class FileStore implements Store {
 }
 
 /** Postgres — para produção (o container pode ser recriado sem perder nada). */
+/** Colunas das tabelas antigas (sem _wa), para reconhecer que são deste app antes de renomear. */
+const LEGACY_TABLES: Record<string, string[]> = {
+  spaces: ['id', 'map', 'chat', 'updated_at', 'name', 'code'],
+  memberships: ['person', 'space_id', 'last_visited'],
+  profiles: ['person', 'avatar', 'updated_at'],
+  uploads: ['name', 'mime', 'data', 'created_at'],
+};
+
 export class PgStore implements Store {
   kind = 'postgres';
   persistent = true;
@@ -194,39 +202,69 @@ export class PgStore implements Store {
     }
   }
 
+  /**
+   * Versões antigas criavam as tabelas sem o sufixo _wa. Renomeia só se a tabela antiga
+   * tiver as colunas deste app (num projeto Supabase compartilhado, "profiles" pode ser de outro app).
+   */
+  private async renameLegacyTables() {
+    for (const [table, cols] of Object.entries(LEGACY_TABLES)) {
+      const { rows } = await this.pool.query(
+        `SELECT
+           to_regclass($1) IS NOT NULL AS has_new,
+           (SELECT array_agg(column_name::text) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $2) AS old_cols`,
+        [`public.${table}_wa`, table],
+      );
+      const { has_new, old_cols } = rows[0] as { has_new: boolean; old_cols: string[] | null };
+      if (has_new || !old_cols) continue;
+      if (!cols.every(c => old_cols.includes(c)) || old_cols.length !== cols.length) {
+        console.warn(`Tabela "${table}" existente não é deste app (colunas diferentes) — deixada como está.`);
+        continue;
+      }
+      await this.pool.query(`ALTER TABLE public.${table} RENAME TO ${table}_wa`);
+      console.log(`Tabela "${table}" renomeada para "${table}_wa".`);
+    }
+    await this.pool.query('ALTER INDEX IF EXISTS public.spaces_code_idx RENAME TO spaces_wa_code_idx').catch(() => {});
+  }
+
   async init() {
+    await this.renameLegacyTables();
     await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS spaces (
+      CREATE TABLE IF NOT EXISTS spaces_wa (
         id text PRIMARY KEY,
         map jsonb NOT NULL,
         chat jsonb NOT NULL DEFAULT '[]'::jsonb,
         updated_at timestamptz NOT NULL DEFAULT now()
       );
-      ALTER TABLE spaces ADD COLUMN IF NOT EXISTS name text;
-      ALTER TABLE spaces ADD COLUMN IF NOT EXISTS code text;
-      CREATE UNIQUE INDEX IF NOT EXISTS spaces_code_idx ON spaces (code);
-      CREATE TABLE IF NOT EXISTS memberships (
+      ALTER TABLE spaces_wa ADD COLUMN IF NOT EXISTS name text;
+      ALTER TABLE spaces_wa ADD COLUMN IF NOT EXISTS code text;
+      CREATE UNIQUE INDEX IF NOT EXISTS spaces_wa_code_idx ON spaces_wa (code);
+      CREATE TABLE IF NOT EXISTS memberships_wa (
         person text NOT NULL,
         space_id text NOT NULL,
         last_visited timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (person, space_id)
       );
-      CREATE TABLE IF NOT EXISTS profiles (
+      CREATE TABLE IF NOT EXISTS profiles_wa (
         person text PRIMARY KEY,
         avatar jsonb NOT NULL,
         updated_at timestamptz NOT NULL DEFAULT now()
       );
-      CREATE TABLE IF NOT EXISTS uploads (
+      CREATE TABLE IF NOT EXISTS uploads_wa (
         name text PRIMARY KEY,
         mime text NOT NULL,
         data bytea NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now()
       );
+      -- Sem policies: só o servidor (dono das tabelas) acessa; a API REST do Supabase com a chave anon não.
+      ALTER TABLE spaces_wa ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE memberships_wa ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE profiles_wa ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE uploads_wa ENABLE ROW LEVEL SECURITY;
     `);
   }
 
   async loadSpace(id: string) {
-    const { rows } = await this.pool.query('SELECT map, chat, name, code FROM spaces WHERE id = $1', [id]);
+    const { rows } = await this.pool.query('SELECT map, chat, name, code FROM spaces_wa WHERE id = $1', [id]);
     const r = rows[0];
     if (!r) return null;
     return { map: r.map, chat: Array.isArray(r.chat) ? r.chat : [], meta: r.name && r.code ? { name: r.name, code: r.code } : null };
@@ -234,38 +272,38 @@ export class PgStore implements Store {
 
   async saveSpace(id: string, map: SpaceMap, chat: ChatMessage[], meta: SpaceMeta) {
     await this.pool.query(
-      `INSERT INTO spaces (id, map, chat, name, code, updated_at) VALUES ($1, $2, $3, $4, $5, now())
+      `INSERT INTO spaces_wa (id, map, chat, name, code, updated_at) VALUES ($1, $2, $3, $4, $5, now())
        ON CONFLICT (id) DO UPDATE SET map = EXCLUDED.map, chat = EXCLUDED.chat, name = EXCLUDED.name, code = EXCLUDED.code, updated_at = now()`,
       [id, JSON.stringify(map), JSON.stringify(chat), meta.name, meta.code],
     );
   }
 
   async findSpaceByCode(code: string) {
-    const { rows } = await this.pool.query('SELECT id FROM spaces WHERE code = $1', [code]);
+    const { rows } = await this.pool.query('SELECT id FROM spaces_wa WHERE code = $1', [code]);
     return (rows[0]?.id as string) ?? null;
   }
 
   async touchMembership(person: string, spaceId: string) {
     await this.pool.query(
-      `INSERT INTO memberships (person, space_id, last_visited) VALUES ($1, $2, now())
+      `INSERT INTO memberships_wa (person, space_id, last_visited) VALUES ($1, $2, now())
        ON CONFLICT (person, space_id) DO UPDATE SET last_visited = now()`,
       [person, spaceId],
     );
   }
 
   async isMember(person: string, spaceId: string) {
-    const { rowCount } = await this.pool.query('SELECT 1 FROM memberships WHERE person = $1 AND space_id = $2', [person, spaceId]);
+    const { rowCount } = await this.pool.query('SELECT 1 FROM memberships_wa WHERE person = $1 AND space_id = $2', [person, spaceId]);
     return !!rowCount;
   }
 
   async hasMembers(spaceId: string) {
-    const { rowCount } = await this.pool.query('SELECT 1 FROM memberships WHERE space_id = $1 LIMIT 1', [spaceId]);
+    const { rowCount } = await this.pool.query('SELECT 1 FROM memberships_wa WHERE space_id = $1 LIMIT 1', [spaceId]);
     return !!rowCount;
   }
 
   async listMemberships(person: string) {
     const { rows } = await this.pool.query(
-      `SELECT m.space_id, s.name, s.code, m.last_visited FROM memberships m JOIN spaces s ON s.id = m.space_id
+      `SELECT m.space_id, s.name, s.code, m.last_visited FROM memberships_wa m JOIN spaces_wa s ON s.id = m.space_id
        WHERE m.person = $1 AND s.code IS NOT NULL ORDER BY m.last_visited DESC`,
       [person],
     );
@@ -273,24 +311,24 @@ export class PgStore implements Store {
   }
 
   async loadProfile(person: string) {
-    const { rows } = await this.pool.query('SELECT avatar FROM profiles WHERE person = $1', [person]);
+    const { rows } = await this.pool.query('SELECT avatar FROM profiles_wa WHERE person = $1', [person]);
     return (rows[0]?.avatar as Avatar) ?? null;
   }
 
   async saveProfile(person: string, avatar: Avatar) {
     await this.pool.query(
-      `INSERT INTO profiles (person, avatar, updated_at) VALUES ($1, $2, now())
+      `INSERT INTO profiles_wa (person, avatar, updated_at) VALUES ($1, $2, now())
        ON CONFLICT (person) DO UPDATE SET avatar = EXCLUDED.avatar, updated_at = now()`,
       [person, JSON.stringify(avatar)],
     );
   }
 
   async saveUpload(name: string, mime: string, data: Buffer) {
-    await this.pool.query('INSERT INTO uploads (name, mime, data) VALUES ($1, $2, $3) ON CONFLICT (name) DO NOTHING', [name, mime, data]);
+    await this.pool.query('INSERT INTO uploads_wa (name, mime, data) VALUES ($1, $2, $3) ON CONFLICT (name) DO NOTHING', [name, mime, data]);
   }
 
   async getUpload(name: string) {
-    const { rows } = await this.pool.query('SELECT mime, data FROM uploads WHERE name = $1', [name]);
+    const { rows } = await this.pool.query('SELECT mime, data FROM uploads_wa WHERE name = $1', [name]);
     return rows[0] ? { mime: rows[0].mime as string, data: Buffer.from(rows[0].data) } : null;
   }
 }

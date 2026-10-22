@@ -60,7 +60,7 @@ npm start          # porta $PORT (padrão 3001)
 
 **Em produção, sem `SUPABASE_URL` + `SUPABASE_ANON_KEY` + `ALLOWED_USERS` o app fica fechado** (nunca abre sem login). Localmente (`npm run dev`) o login fica desligado.
 
-As tabelas (`spaces` e `uploads`) são criadas sozinhas na primeira inicialização.
+As tabelas (`spaces_wa`, `memberships_wa`, `profiles_wa` e `uploads_wa`, com RLS ligado) são criadas sozinhas na primeira inicialização.
 
 ### Deploy no Dokploy (gprgai.top/workspace)
 

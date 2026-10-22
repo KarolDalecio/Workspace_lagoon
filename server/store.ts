@@ -172,12 +172,16 @@ class FileStore implements Store {
 }
 
 /** Postgres — para produção (o container pode ser recriado sem perder nada). */
-/** Colunas das tabelas antigas (sem _wa), para reconhecer que são deste app antes de renomear. */
-const LEGACY_TABLES: Record<string, string[]> = {
-  spaces: ['id', 'map', 'chat', 'updated_at', 'name', 'code'],
-  memberships: ['person', 'space_id', 'last_visited'],
-  profiles: ['person', 'avatar', 'updated_at'],
-  uploads: ['name', 'mime', 'data', 'created_at'],
+/**
+ * Tabelas antigas (sem _wa): todas as colunas deste app e as mínimas para aproveitar os dados.
+ * Com exatamente essas colunas, a tabela é renomeada; com colunas a mais (pode ser compartilhada
+ * com outro app no mesmo projeto Supabase), as linhas são só copiadas e a tabela fica intocada.
+ */
+const LEGACY_TABLES: Record<string, { cols: string[]; required: string[] }> = {
+  spaces: { cols: ['id', 'map', 'chat', 'updated_at', 'name', 'code'], required: ['id', 'map'] },
+  memberships: { cols: ['person', 'space_id', 'last_visited'], required: ['person', 'space_id'] },
+  profiles: { cols: ['person', 'avatar', 'updated_at'], required: ['person', 'avatar'] },
+  uploads: { cols: ['name', 'mime', 'data', 'created_at'], required: ['name', 'mime', 'data'] },
 };
 
 export class PgStore implements Store {
@@ -206,24 +210,52 @@ export class PgStore implements Store {
    * Versões antigas criavam as tabelas sem o sufixo _wa. Renomeia só se a tabela antiga
    * tiver as colunas deste app (num projeto Supabase compartilhado, "profiles" pode ser de outro app).
    */
+  private async legacyInfo(table: string) {
+    const { rows } = await this.pool.query(
+      `SELECT
+         to_regclass($1) IS NOT NULL AS has_new,
+         (SELECT array_agg(column_name::text) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $2) AS old_cols`,
+      [`public.${table}_wa`, table],
+    );
+    return rows[0] as { has_new: boolean; old_cols: string[] | null };
+  }
+
+  /** Antes de criar as tabelas _wa: renomeia as antigas que são só deste app (mantém dados e índices). */
   private async renameLegacyTables() {
-    for (const [table, cols] of Object.entries(LEGACY_TABLES)) {
-      const { rows } = await this.pool.query(
-        `SELECT
-           to_regclass($1) IS NOT NULL AS has_new,
-           (SELECT array_agg(column_name::text) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $2) AS old_cols`,
-        [`public.${table}_wa`, table],
-      );
-      const { has_new, old_cols } = rows[0] as { has_new: boolean; old_cols: string[] | null };
+    for (const [table, { cols }] of Object.entries(LEGACY_TABLES)) {
+      const { has_new, old_cols } = await this.legacyInfo(table);
       if (has_new || !old_cols) continue;
-      if (!cols.every(c => old_cols.includes(c)) || old_cols.length !== cols.length) {
-        console.warn(`Tabela "${table}" existente não é deste app (colunas diferentes) — deixada como está.`);
-        continue;
-      }
+      if (old_cols.length !== cols.length || !cols.every(c => old_cols.includes(c))) continue; // copiada depois
       await this.pool.query(`ALTER TABLE public.${table} RENAME TO ${table}_wa`);
       console.log(`Tabela "${table}" renomeada para "${table}_wa".`);
     }
     await this.pool.query('ALTER INDEX IF EXISTS public.spaces_code_idx RENAME TO spaces_wa_code_idx').catch(() => {});
+  }
+
+  /**
+   * Depois de criar as tabelas _wa: copia as linhas das tabelas antigas que continuam existindo
+   * (as que têm colunas a mais). Não altera nem apaga a tabela antiga; linhas já copiadas são ignoradas.
+   */
+  private async copyLegacyRows() {
+    for (const [table, { cols, required }] of Object.entries(LEGACY_TABLES)) {
+      const { old_cols } = await this.legacyInfo(table);
+      if (!old_cols) continue;
+      if (!required.every(c => old_cols.includes(c))) {
+        console.warn(`Tabela "${table}" existente não é deste app — ignorada.`);
+        continue;
+      }
+      const shared = cols.filter(c => old_cols.includes(c));
+      const list = shared.join(', ');
+      const where = required.map(c => `${c} IS NOT NULL`).join(' AND ');
+      try {
+        const { rowCount } = await this.pool.query(
+          `INSERT INTO ${table}_wa (${list}) SELECT ${list} FROM public.${table} WHERE ${where} ON CONFLICT DO NOTHING`,
+        );
+        if (rowCount) console.log(`${rowCount} linha(s) copiada(s) de "${table}" para "${table}_wa".`);
+      } catch (err) {
+        console.error(`Não foi possível copiar "${table}" para "${table}_wa":`, (err as Error).message);
+      }
+    }
   }
 
   async init() {
@@ -261,6 +293,7 @@ export class PgStore implements Store {
       ALTER TABLE profiles_wa ENABLE ROW LEVEL SECURITY;
       ALTER TABLE uploads_wa ENABLE ROW LEVEL SECURITY;
     `);
+    await this.copyLegacyRows();
   }
 
   async loadSpace(id: string) {
